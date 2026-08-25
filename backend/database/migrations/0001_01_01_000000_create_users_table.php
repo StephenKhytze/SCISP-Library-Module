@@ -29,6 +29,8 @@ return new class extends Migration
                 'disabled',
             ])->default('active');
 
+            $table->decimal('total_fines', 8, 2)->default(0);
+
             $table->timestamps();
         });
     }
