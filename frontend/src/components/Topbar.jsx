@@ -5,7 +5,9 @@ export default function Topbar({
   currentUser = { name: 'Juan Dela Cruz', role: 'Student', department: 'IT', idNumber: '12345' },
   users = [
     { name: 'Juan Dela Cruz', role: 'Student', department: 'IT', idNumber: '12345' },
-    { name: 'Admin User', role: 'Admin', department: 'Administration', idNumber: '00001' }
+    { name: 'Prof. Maria Santos', role: 'Teacher', department: 'Computer Science', idNumber: 'T-987' },
+    { name: 'Admin User', role: 'Admin', department: 'Administration', idNumber: '00001' },
+    { name: 'System Admin', role: 'Super Admin', department: 'IT Operations', idNumber: 'SYS-01' }
   ],
   onSelectUser = () => {},
   onOpenTechSpec = () => {},
