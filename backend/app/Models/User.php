@@ -27,7 +27,7 @@ use Laravel\Fortify\TwoFactorAuthenticatable;
  * @property Carbon|null $created_at
  * @property Carbon|null $updated_at
  */
-#[Fillable(['username', 'password', 'role', 'status'])]
+#[Fillable(['username', 'password', 'role', 'status', 'total_fines'])]
 #[Hidden(['password', 'two_factor_secret', 'two_factor_recovery_codes'])]
 class User extends Authenticatable implements PasskeyUser
 {
@@ -48,5 +48,21 @@ class User extends Authenticatable implements PasskeyUser
             'password' => 'hashed',
             'two_factor_confirmed_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Get the transactions associated with the user.
+     */
+    public function transactions()
+    {
+        return $this->hasMany(Transaction::class, 'user_id', 'user_id');
+    }
+
+    /**
+     * Get the holds associated with the user.
+     */
+    public function holds()
+    {
+        return $this->hasMany(Hold::class, 'user_id', 'user_id');
     }
 }
