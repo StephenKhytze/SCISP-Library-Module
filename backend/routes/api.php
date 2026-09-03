@@ -56,16 +56,7 @@ Route::middleware('auth.jwt')->group(function () {
 
     /*
     |--------------------------------------------------------------------------
-    | Group 4: Library
-    |--------------------------------------------------------------------------
-    */
-    Route::prefix('library')->group(function () {
-        Route::get('/', [LibraryController::class, 'index']);
-        // Group 4: Add more library routes here
-    });
 
-    /*
-    |--------------------------------------------------------------------------
     | Group 5: Student Info & Faculty Directory
     |--------------------------------------------------------------------------
     */
@@ -77,5 +68,34 @@ Route::middleware('auth.jwt')->group(function () {
     Route::prefix('faculty')->group(function () {
         Route::get('/', [FacultyController::class, 'index']);
         // Group 5: Add more faculty routes here
+    });
+});
+
+/*
+|--------------------------------------------------------------------------
+| Group 4: Library
+|--------------------------------------------------------------------------
+*/
+Route::prefix('library')->middleware(\App\Http\Middleware\ExternalAuthMiddleware::class)->group(function () {
+    Route::get('/', [LibraryController::class, 'index']);
+    
+    // Public Catalog Search (Authenticated users)
+    Route::get('/books', [\App\Http\Controllers\Api\BookController::class, 'index']);
+    Route::get('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'show']);
+    
+    // Automated Hold Queue (Authenticated users)
+    Route::post('/books/{id}/holds', [\App\Http\Controllers\Api\HoldController::class, 'store']);
+    Route::delete('/holds/{id}', [\App\Http\Controllers\Api\HoldController::class, 'destroy']);
+    
+    // Admin Inventory Management & Circulation
+    Route::middleware(\App\Http\Middleware\RequireAdminRole::class)->group(function () {
+        Route::post('/books', [\App\Http\Controllers\Api\BookController::class, 'store']);
+        Route::put('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'update']);
+        Route::post('/books/{id}/copies', [\App\Http\Controllers\Api\BookCopyController::class, 'store']);
+        Route::put('/copies/{id}', [\App\Http\Controllers\Api\BookCopyController::class, 'update']);
+        
+        // Circulation
+        Route::post('/checkout', [\App\Http\Controllers\Api\CirculationController::class, 'checkout']);
+        Route::post('/checkin', [\App\Http\Controllers\Api\CirculationController::class, 'checkin']);
     });
 });
