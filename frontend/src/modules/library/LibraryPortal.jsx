@@ -1017,15 +1017,6 @@ export default function LibraryPortal() {
             <span className="bg-[#8B1A24] text-white text-[9.5px] font-black tracking-wider uppercase px-2.5 py-1 rounded">
               LIBRARY & CIRCULATION SYSTEM
             </span>
-            {isSuperAdmin && (
-              <button 
-                type="button"
-                onClick={() => setShowAddBookModal(true)}
-                className="bg-amber-400 hover:bg-amber-500 text-amber-950 font-black text-[9.5px] tracking-wider uppercase px-2.5 py-1 rounded flex items-center gap-1 transition-colors cursor-pointer shadow-2xs"
-              >
-                <span>+ ADD TITLE & COPIES</span>
-              </button>
-            )}
           </div>
 
           <h1 className="text-[24px] lg:text-[26px] font-extrabold text-[#0f172a] tracking-tight leading-tight mb-1">
