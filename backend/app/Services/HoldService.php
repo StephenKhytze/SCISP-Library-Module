@@ -16,43 +16,54 @@ class HoldService
     public function placeHold(int $userId, int $bookId): Hold
     {
         return DB::transaction(function () use ($userId, $bookId) {
-            // Count available copies using a lock
-            $availableCount = BookCopy::where('book_id', $bookId)
-                ->where('availability_status', 'available')
-                ->lockForUpdate()
-                ->count();
-
-            if ($availableCount > 0) {
-                throw new Exception("Cannot place a hold. There are currently copies available for checkout.");
-            }
-
-            // Check if user already has a pending hold for this book
+            // Check if user already has a pending or fulfilled hold for this book
             $existingHold = Hold::where('book_id', $bookId)
                 ->where('user_id', $userId)
-                ->where('status', 'pending')
+                ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
                 ->first();
 
             if ($existingHold) {
-                throw new Exception("You already have a pending hold for this book.");
+                throw new Exception("You already have an active hold for this book.");
             }
 
-            // Determine queue position
-            $maxPosition = Hold::where('book_id', $bookId)
-                ->where('status', 'pending')
+            // Find an available copy
+            $availableCopy = BookCopy::where('book_id', $bookId)
+                ->where('availability_status', 'available')
                 ->lockForUpdate()
-                ->max('queue_position');
+                ->first();
 
-            $nextPosition = $maxPosition ? $maxPosition + 1 : 1;
+            if ($availableCopy) {
+                // Wait for admin approval before fulfilling (Getting Approval)
+                $hold = Hold::create([
+                    'user_id' => $userId,
+                    'book_id' => $bookId,
+                    'request_date' => now(),
+                    'status' => 'pending_approval',
+                    'queue_position' => 0,
+                    'copy_id' => $availableCopy->copy_id
+                ]);
 
-            $hold = Hold::create([
-                'user_id' => $userId,
-                'book_id' => $bookId,
-                'request_date' => now(),
-                'status' => 'pending',
-                'queue_position' => $nextPosition,
-            ]);
+                $availableCopy->update(['availability_status' => 'on_hold']);
+                return $hold;
+            } else {
+                // Out of stock -> Join waitlist
+                $maxPosition = Hold::where('book_id', $bookId)
+                    ->where('status', 'pending')
+                    ->lockForUpdate()
+                    ->max('queue_position');
 
-            return $hold;
+                $nextPosition = $maxPosition ? $maxPosition + 1 : 1;
+
+                $hold = Hold::create([
+                    'user_id' => $userId,
+                    'book_id' => $bookId,
+                    'request_date' => now(),
+                    'status' => 'pending',
+                    'queue_position' => $nextPosition,
+                ]);
+
+                return $hold;
+            }
         });
     }
 
@@ -71,8 +82,12 @@ class HoldService
             ->first();
 
         if ($nextHold) {
-            // Fulfill the hold
-            $nextHold->update(['status' => 'fulfilled']);
+            // Fulfill the hold and assign the copy
+            $nextHold->update([
+                'status' => 'pending_approval',
+                'queue_position' => 0,
+                'copy_id' => $copyId
+            ]);
 
             // Mark the copy as on_hold specifically for them
             $copy = BookCopy::where('copy_id', $copyId)->lockForUpdate()->first();
@@ -91,18 +106,35 @@ class HoldService
      */
     public function cancelHold(int $holdId, int $userId, bool $isAdmin = false): Hold
     {
-        $hold = Hold::findOrFail($holdId);
+        return DB::transaction(function () use ($holdId, $userId, $isAdmin) {
+            $hold = Hold::findOrFail($holdId);
 
-        if (!$isAdmin && $hold->user_id !== $userId) {
-            throw new Exception("You are not authorized to cancel this hold.");
-        }
+            if (!$isAdmin && $hold->user_id !== $userId) {
+                throw new Exception("You are not authorized to cancel this hold.");
+            }
 
-        if ($hold->status !== 'pending') {
-            throw new Exception("Only pending holds can be cancelled.");
-        }
+            if (!in_array($hold->status, ['pending', 'pending_approval', 'fulfilled'])) {
+                throw new Exception("Only pending, pending_approval, or fulfilled holds can be cancelled.");
+            }
 
-        $hold->update(['status' => 'cancelled']);
+            $wasFulfilled = in_array($hold->status, ['fulfilled', 'pending_approval']);
+            $copyId = $hold->copy_id;
+            $bookId = $hold->book_id;
 
-        return $hold;
+            $hold->update(['status' => 'cancelled']);
+
+            if ($wasFulfilled && $copyId) {
+                // The copy is now freed up. See if anyone else is waiting for it.
+                $wasHoldFulfilled = $this->advanceQueue($bookId, $copyId);
+
+                if (!$wasHoldFulfilled) {
+                    // No one else is waiting, make it available again
+                    $copy = BookCopy::findOrFail($copyId);
+                    $copy->update(['availability_status' => 'available']);
+                }
+            }
+
+            return $hold;
+        });
     }
 }

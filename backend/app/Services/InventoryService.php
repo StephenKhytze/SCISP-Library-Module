@@ -31,8 +31,8 @@ class InventoryService
             $query->where('isbn', $filters['isbn']);
         }
 
-        // Compute live availability using subquery
-        $query->withCount([
+        // Compute live availability using subquery and eager-load copies
+        $query->with(['copies'])->withCount([
             'copies as available_copies_count' => function ($q) {
                 $q->where('availability_status', 'available');
             }

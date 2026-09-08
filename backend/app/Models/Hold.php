@@ -6,9 +6,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-#[Fillable(['user_id', 'book_id', 'request_date', 'status', 'queue_position'])]
 class Hold extends Model
 {
+    protected $fillable = ['user_id', 'book_id', 'copy_id', 'request_date', 'status', 'queue_position'];
     use HasFactory;
 
     protected $primaryKey = 'hold_id';

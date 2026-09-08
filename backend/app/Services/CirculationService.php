@@ -55,8 +55,33 @@ class CirculationService
                 throw new Exception("Book copy not found.");
             }
 
+            $isReserved = false;
+            if ($copy->reserve_id) {
+                $reserve = \App\Models\CourseReserve::find($copy->reserve_id);
+                if ($reserve && $reserve->status === 'approved') {
+                    $isReserved = true;
+                    $studentInClass = \App\Models\CourseSectionStudent::where('section_id', $reserve->section_id)
+                                        ->where('student_id', $userId)
+                                        ->exists();
+                    if (!$studentInClass && !in_array($role, ['superadmin', 'admin', 'faculty'])) {
+                        throw new Exception("This copy is strictly reserved for a course section. You are not assigned to it.");
+                    }
+                }
+            }
+
             if ($copy->availability_status !== 'available') {
-                throw new Exception("This copy is currently not available for checkout.");
+                if ($copy->availability_status === 'on_hold') {
+                    $userHold = \App\Models\Hold::where('copy_id', $copyId)
+                        ->where('user_id', $userId)
+                        ->where('status', 'fulfilled')
+                        ->first();
+                    
+                    if (!$userHold) {
+                        throw new Exception("This copy is currently reserved for another user.");
+                    }
+                } else {
+                    throw new Exception("This copy is currently not available for checkout.");
+                }
             }
 
             $user = User::findOrFail($userId);
@@ -64,14 +89,40 @@ class CirculationService
             // Update the copy status
             $copy->update(['availability_status' => 'checked_out']);
 
+            $dueDate = $this->getDueDateForRole($user->role);
+            if ($isReserved) {
+                $dueDate = now()->addDays(14);
+            }
+
             // Create the transaction
             $transaction = Transaction::create([
                 'user_id' => $user->user_id,
                 'copy_id' => $copy->copy_id,
                 'date_borrowed' => now(),
-                'due_date' => $this->getDueDateForRole($user->role),
+                'due_date' => $dueDate,
                 'status' => 'active',
             ]);
+
+            // Clear any pending or fulfilled holds the user has for this book
+            $existingHold = \App\Models\Hold::where('book_id', $copy->book_id)
+                ->where('user_id', $user->user_id)
+                ->whereIn('status', ['pending', 'fulfilled'])
+                ->first();
+
+            if ($existingHold) {
+                if ($existingHold->status === 'fulfilled' && $existingHold->copy_id && $existingHold->copy_id !== $copy->copy_id) {
+                    // Admin checked out a different physical copy. 
+                    // Release the originally held copy to the waitlist.
+                    $wasHoldFulfilled = $this->holdService->advanceQueue($existingHold->book_id, $existingHold->copy_id);
+                    if (!$wasHoldFulfilled) {
+                        $oldCopy = BookCopy::find($existingHold->copy_id);
+                        if ($oldCopy) {
+                            $oldCopy->update(['availability_status' => 'available']);
+                        }
+                    }
+                }
+                $existingHold->delete();
+            }
 
             return $transaction;
         });
@@ -114,14 +165,67 @@ class CirculationService
             $transaction->actual_return_date = $returnDate;
             $transaction->save();
 
+            $transaction->load('bookCopy');
+            $isReserved = $transaction->bookCopy && $transaction->bookCopy->reserve_id !== null;
+
             // Mark the copy as available again, OR fulfill a hold if someone is waiting
-            $wasHoldFulfilled = $this->holdService->advanceQueue($transaction->bookCopy->book_id, $transaction->copy_id);
+            $wasHoldFulfilled = false;
+            
+            if (!$isReserved) {
+                $wasHoldFulfilled = $this->holdService->advanceQueue($transaction->bookCopy->book_id, $transaction->copy_id);
+            }
 
             if (!$wasHoldFulfilled) {
                 // Only make it available if no one was in the hold queue
                 $copy = BookCopy::findOrFail($transaction->copy_id);
                 $copy->update(['availability_status' => 'available']);
             }
+
+            return $transaction;
+        });
+    }
+
+    public function renew(int $transactionId, int $userId, string $role): Transaction
+    {
+        return DB::transaction(function () use ($transactionId, $userId, $role) {
+            $transaction = Transaction::with(['user', 'bookCopy'])->where('transaction_id', $transactionId)->lockForUpdate()->first();
+
+            if (!$transaction) {
+                throw new Exception("Transaction not found.");
+            }
+
+            if ($transaction->status !== 'active') {
+                throw new Exception("Transaction is already closed.");
+            }
+
+            $isReserved = $transaction->bookCopy && $transaction->bookCopy->reserve_id !== null;
+
+            if ($isReserved && $role === 'faculty') {
+                $reserve = \App\Models\CourseReserve::find($transaction->bookCopy->reserve_id);
+                if ($reserve->user_id !== $userId) {
+                    throw new Exception("You are not the teacher for this reserved book.");
+                }
+            } else if ($transaction->user_id !== $userId && !in_array($role, ['superadmin', 'admin'])) {
+                throw new Exception("You are not authorized to renew this book.");
+            }
+
+            if (!$isReserved) {
+                $hasHolds = \App\Models\Hold::where('book_id', $transaction->bookCopy->book_id)
+                    ->whereIn('status', ['pending', 'pending_approval'])
+                    ->exists();
+
+                if ($hasHolds) {
+                    throw new Exception("Cannot renew: This book has pending holds.");
+                }
+            }
+
+            $dueDate = $this->getDueDateForRole($transaction->user->role ?? 'student');
+            if ($isReserved) {
+                $dueDate = now()->addDays(14);
+            }
+
+            $transaction->due_date = $dueDate;
+            $transaction->save();
 
             return $transaction;
         });

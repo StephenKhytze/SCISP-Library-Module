@@ -75,26 +75,52 @@ Route::middleware('auth.jwt')->group(function () {
 | Group 4: Library
 |--------------------------------------------------------------------------
 */
-Route::prefix('library')->middleware(\App\Http\Middleware\ExternalAuthMiddleware::class)->group(function () {
+Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::class)->group(function () {
     Route::get('/', [LibraryController::class, 'index']);
     
     // Public Catalog Search (Authenticated users)
     Route::get('/books', [\App\Http\Controllers\Api\BookController::class, 'index']);
     Route::get('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'show']);
     
+    // My Loans & Holds
+    Route::get('/loans/me', [\App\Http\Controllers\Api\CirculationController::class, 'myLoans']);
+    Route::post('/loans/renew', [\App\Http\Controllers\Api\CirculationController::class, 'renew']);
+    Route::get('/holds/me', [\App\Http\Controllers\Api\HoldController::class, 'myHolds']);
+    
     // Automated Hold Queue (Authenticated users)
     Route::post('/books/{id}/holds', [\App\Http\Controllers\Api\HoldController::class, 'store']);
     Route::delete('/holds/{id}', [\App\Http\Controllers\Api\HoldController::class, 'destroy']);
     
+    // Course Sections (Faculty & Students)
+    Route::get('/sections/me', [\App\Http\Controllers\Api\CourseSectionController::class, 'mySections']);
+    Route::get('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'index']);
+    Route::post('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'store']);
+    Route::get('/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'getStudents']);
+    Route::post('/sections/{sectionId}/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'addStudent']);
+    Route::delete('/sections/{sectionId}/students/{studentId}', [\App\Http\Controllers\Api\CourseSectionController::class, 'removeStudent']);
+
+    // Course Reserves
+    Route::get('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'index']);
+    Route::post('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'store']);
+    Route::put('/reserves/{id}/status', [\App\Http\Controllers\Api\ReserveController::class, 'updateStatus']); // Admin approve/deny & Teacher release
+    Route::post('/reserves/{id}/allocate', [\App\Http\Controllers\Api\ReserveController::class, 'allocateCopies']); // Admin allocate
+    
     // Admin Inventory Management & Circulation
-    Route::middleware(\App\Http\Middleware\RequireAdminRole::class)->group(function () {
+    Route::middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin')->group(function () {
         Route::post('/books', [\App\Http\Controllers\Api\BookController::class, 'store']);
         Route::put('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'update']);
         Route::post('/books/{id}/copies', [\App\Http\Controllers\Api\BookCopyController::class, 'store']);
         Route::put('/copies/{id}', [\App\Http\Controllers\Api\BookCopyController::class, 'update']);
         
         // Circulation
+        Route::get('/circulation', [\App\Http\Controllers\Api\CirculationController::class, 'index']);
+        Route::get('/holds', [\App\Http\Controllers\Api\CirculationController::class, 'activeHolds']);
+        Route::put('/holds/{id}/accept', [\App\Http\Controllers\Api\HoldController::class, 'acceptHold']);
         Route::post('/checkout', [\App\Http\Controllers\Api\CirculationController::class, 'checkout']);
         Route::post('/checkin', [\App\Http\Controllers\Api\CirculationController::class, 'checkin']);
+
+        // Fines
+        Route::get('/fines', [\App\Http\Controllers\Api\FinesController::class, 'index']);
+        Route::post('/fines/clear', [\App\Http\Controllers\Api\FinesController::class, 'clear']);
     });
 });

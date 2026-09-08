@@ -6,9 +6,9 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-#[Fillable(['user_id', 'copy_id', 'date_borrowed', 'due_date', 'actual_return_date', 'status'])]
 class Transaction extends Model
 {
+    protected $fillable = ['user_id', 'copy_id', 'date_borrowed', 'due_date', 'actual_return_date', 'status'];
     use HasFactory;
 
     protected $primaryKey = 'transaction_id';

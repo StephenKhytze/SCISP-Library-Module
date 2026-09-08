@@ -6,12 +6,13 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
-#[Fillable(['book_title', 'author', 'category', 'isbn', 'physical_location', 'total_copies'])]
 class Book extends Model
 {
     use HasFactory;
 
     protected $primaryKey = 'book_id';
+
+    protected $fillable = ['book_title', 'author', 'category', 'isbn', 'physical_location', 'total_copies'];
 
     /**
      * Get the copies for the book.

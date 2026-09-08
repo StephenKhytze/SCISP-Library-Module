@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import { Bell, GraduationCap, Check, Shield, Crown, UserCheck, Laptop, LogOut } from 'lucide-react';
 
 export default function Topbar({
-  currentUser = { name: 'Juan Dela Cruz', role: 'Student', department: 'IT', idNumber: '12345' },
+  currentUser = { name: 'Juan Dela Cruz', username: 'DelaCruz_Juan_C1234', role: 'Student', department: 'IT', idNumber: '12345' },
   users = [
-    { name: 'Juan Dela Cruz', role: 'Student', department: 'IT', idNumber: '12345' },
-    { name: 'Prof. Maria Santos', role: 'Teacher', department: 'Computer Science', idNumber: 'T-987' },
-    { name: 'Admin User', role: 'Admin', department: 'Administration', idNumber: '00001' },
-    { name: 'System Admin', role: 'Super Admin', department: 'IT Operations', idNumber: 'SYS-01' }
+    { name: 'Juan Dela Cruz', username: 'DelaCruz_Juan_C1234', role: 'Student', department: 'IT', idNumber: '12345' },
+    { name: 'Prof. Maria Santos', username: 'Santos_Maria_F12', role: 'Teacher', department: 'Computer Science', idNumber: 'T-987' },
+    { name: 'Admin User', username: 'Admin_User_00001', role: 'Admin', department: 'Administration', idNumber: '00001' },
+    { name: 'System Admin', username: 'SysAdmin_001', role: 'Super Admin', department: 'IT Operations', idNumber: 'SYS-01' }
   ],
   onSelectUser = () => {},
   onOpenTechSpec = () => {},

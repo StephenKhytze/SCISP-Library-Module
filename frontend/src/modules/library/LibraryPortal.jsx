@@ -1,158 +1,26 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import api from '../../api';
+import TeacherReservesView from './TeacherReservesView';
 
-const initialBooks = [
-  {
-    id: 1,
-    title: "Clean Architecture & Software Design",
-    author: "Robert C. Martin",
-    isbn: "978-0134494166",
-    location: "2nd Floor - Shelf 4B (CS Section)",
-    categories: ["COMPUTER SCIENCE", "COURSE RESERVE"],
-    available: 2,
-    total: 3,
-    image: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=80&w=300&h=300"
-  },
-  {
-    id: 2,
-    title: "Modern Web Architectures with React",
-    author: "Alex Morgan",
-    isbn: "978-1491950357",
-    location: "3rd Floor - Shelf 2A (Web Lab)",
-    categories: ["WEB ENGINEERING"],
-    available: 2,
-    total: 2,
-    image: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=300&h=300"
-  },
-  {
-    id: 3,
-    title: "Database Management Systems 4th Ed.",
-    author: "Raghu Ramakrishnan",
-    isbn: "978-0072465631",
-    location: "2nd Floor - Shelf 5C (DB Section)",
-    categories: ["DATABASES", "COURSE RESERVE"],
-    available: 1,
-    total: 2,
-    image: "https://images.unsplash.com/photo-1526374965328-7f61d4dc18c5?auto=format&fit=crop&q=80&w=300&h=300"
-  },
-  {
-    id: 4,
-    title: "Data Structures and Algorithms in C++",
-    author: "Michael T. Goodrich",
-    isbn: "978-1118806771",
-    location: "2nd Floor - Shelf 1A (CS Stacks)",
-    categories: ["PROGRAMMING"],
-    available: 1,
-    total: 2,
-    image: "https://images.unsplash.com/photo-1515879218367-8466d910aaa4?auto=format&fit=crop&q=80&w=300&h=300"
-  },
-  {
-    id: 5,
-    title: "The C Programming Language 2nd Ed.",
-    author: "Brian W. Kernighan & Dennis M. Ritchie",
-    isbn: "978-0131103627",
-    location: "1st Floor - Special Collections",
-    categories: ["PROGRAMMING", "COURSE RESERVE"],
-    available: 1,
-    total: 1,
-    image: "https://images.unsplash.com/photo-1532012164546-f432f2e3777a?auto=format&fit=crop&q=80&w=300&h=300"
-  }
-];
-
-const mockCirculation = [
-  {
-    id: 1,
-    title: "Database Management Systems 4th Ed.",
-    copyId: "CPY-DB301-01",
-    barcode: "BC: 8839203001",
-    author: "Raghu Ramakrishnan",
-    borrower: "Juan Dela Cruz",
-    borrowerId: "2024-00123-ST",
-    overdueDate: "2026-08-10"
-  },
-  {
-    id: 2,
-    title: "Data Structures and Algorithms in C++",
-    copyId: "CPY-DSA101-02",
-    barcode: "BC: 8839204002",
-    author: "Michael T. Goodrich",
-    borrower: "Maria Santos",
-    borrowerId: "2023-00912",
-    overdueDate: "2026-07-24"
-  }
-];
-
-const mockReserves = [
-  {
-    id: 1,
-    course: "IT 311",
-    status: "Active Reserve",
-    title: "Database Management Systems 4th Ed.",
-    type: "2-Hour In-Library Desk Reference",
-    requester: "Juan Dela Cruz",
-    role: "Student",
-    date: "2026-08-01",
-    note: "Required reference textbook for Midterm SQL Lab Exam."
-  },
-  {
-    id: 2,
-    course: "CS 102",
-    status: "Active Reserve",
-    title: "The C Programming Language 2nd Ed.",
-    type: "Overnight Checkout Reserve",
-    requester: "Prof. Maria Santos",
-    role: "Teacher",
-    date: "2026-07-28",
-    note: "Core textbook for System Programming Lab."
-  }
-];
-
-const mockHoldRequests = [
-  {
-    id: 1,
-    pos: "#1",
-    bookTitle: "Clean Code: A Handbook of Agile Software Craftsmanship",
-    requester: "Juan Dela Cruz",
-    role: "Student",
-    date: "2026-08-01"
-  },
-  {
-    id: 2,
-    pos: "#2",
-    bookTitle: "Data Structures and Algorithms in C++",
-    requester: "Prof. Maria Santos",
-    role: "Teacher",
-    date: "2026-08-02"
-  }
-];
-
-const mockFines = [
-  {
-    id: 1,
-    refId: "FINE-101",
-    borrowerName: "Maria Santos",
-    bookTitle: "Data Structures and Algorithms in C++",
-    daysLate: "10 Days",
-    amount: "₱100.00"
-  },
-  {
-    id: 2,
-    refId: "FINE-102",
-    borrowerName: "Juan Dela Cruz",
-    bookTitle: "Introduction to Operating Systems",
-    daysLate: "5 Days",
-    amount: "₱50.00"
-  }
-];
+// Keeping mock data for fallback or reference if needed, but we will use state.
+const initialBooks = [];
 
 export default function LibraryPortal() {
   const [activeTab, setActiveTab] = useState('catalog');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [books, setBooks] = useState(initialBooks);
+  
+  const [books, setBooks] = useState([]);
+  const [circulation, setCirculation] = useState([]);
+  const [reserves, setReserves] = useState([]);
+  const [holdRequests, setHoldRequests] = useState([]);
+  const [fines, setFines] = useState([]);
+  const [myLoans, setMyLoans] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   // Modals
   const [selectedBook, setSelectedBook] = useState(null);
-  const [showReserveModal, setShowReserveModal] = useState(false);
+  const [showQRModal, setShowQRModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
 
   // New Book Form State
@@ -166,9 +34,139 @@ export default function LibraryPortal() {
     isCourseReserve: false
   });
 
+  const [checkoutData, setCheckoutData] = useState({ userId: '', bookId: '', copyId: '' });
+  const [circulationSearch, setCirculationSearch] = useState('');
+  const [finesSearch, setFinesSearch] = useState('');
+  const [myHolds, setMyHolds] = useState([]);
+  const [selectedLoan, setSelectedLoan] = useState(null);
+  
   const userStr = localStorage.getItem('user');
   const user = userStr ? JSON.parse(userStr) : null;
   const isSuperAdmin = !user || user?.role === 'Super Admin' || user?.role === 'super_admin' || user?.role === 'Admin' || user?.role === 'admin';
+
+  const fetchData = useCallback(async () => {
+    try {
+      setLoading(true);
+      // Fetch books, my loans, and my holds concurrently
+      const [booksRes, myLoansRes, myHoldsRes] = await Promise.all([
+        api.get('/library/books'),
+        api.get('/library/loans/me'),
+        api.get('/library/holds/me')
+      ]);
+      
+      // Extract data array from Laravel paginated response or direct array
+      const booksArray = Array.isArray(booksRes.data) ? booksRes.data : (booksRes.data.data || []);
+      
+      const formattedBooks = booksArray.map(b => ({
+        id: b.book_id,
+        title: b.book_title,
+        author: b.author,
+        isbn: b.isbn,
+        location: b.physical_location,
+        categories: b.category ? [b.category] : [],
+        available: b.available_copies_count ?? 0,
+        total: b.total_copies ?? 0,
+        copies: b.copies || [],
+        image: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=80&w=300&h=300"
+      }));
+      setBooks(formattedBooks);
+      setMyLoans(myLoansRes.data);
+      
+      setMyHolds(myHoldsRes.data.map(h => ({
+        id: h.hold_id,
+        pos: h.status === 'pending_approval' ? 'Waiting for Approval' : (h.queue_position > 0 ? `#${h.queue_position}` : 'Ready for Pickup'),
+        bookTitle: h.book?.book_title,
+        date: h.created_at,
+        status: h.status
+      })));
+
+      // Fetch admin data if SuperAdmin/Admin
+      if (isSuperAdmin) {
+         const [circRes, resRes, holdsRes, finesRes] = await Promise.all([
+           api.get('/library/circulation'),
+           api.get('/library/reserves'),
+           api.get('/library/holds'),
+           api.get('/library/fines')
+         ]);
+
+         setCirculation(circRes.data.map(t => ({
+           id: t.transaction_id,
+           title: t.book_copy?.book?.book_title,
+           copyId: t.book_copy?.copy_id,
+           barcode: t.book_copy?.barcode,
+           author: t.book_copy?.book?.author,
+           borrower: t.user?.username,
+           borrowerId: t.user?.user_id,
+           overdueDate: t.due_date
+         })));
+
+         setReserves(resRes.data.map(r => ({
+           id: r.reserve_id,
+           course: r.section?.name || 'N/A',
+           status: r.status,
+           title: r.book?.book_title || 'N/A',
+           type: r.target_group || 'Course Reserve',
+           requester: r.user?.username || 'Unknown',
+           role: r.user?.role || 'Teacher',
+           date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A',
+           note: r.teacher_to_admin_note || r.teacher_to_student_note || 'No notes provided.'
+         })));
+
+
+         setHoldRequests(holdsRes.data.map(h => ({
+           id: h.hold_id,
+           pos: h.status === 'pending_approval' ? 'Getting Approval' : `#${h.queue_position}`,
+           status: h.status,
+           bookTitle: h.book?.book_title,
+           requester: h.user?.username,
+           requesterId: h.user_id,
+           copyId: h.copy_id,
+           role: h.user?.role,
+           date: h.created_at
+         })));
+
+         setFines(finesRes.data.map(f => ({
+           id: f.fine_id,
+           refId: f.ref_id,
+           borrowerName: f.user?.username,
+           bookTitle: f.book_title,
+           daysLate: `${f.days_late} Days`,
+           amount: `₱${f.amount}`
+         })));
+      } else if (user?.role === 'Student') {
+         try {
+           const studentSectionsRes = await api.get('/library/sections/me');
+           const myReserves = [];
+           studentSectionsRes.data.forEach(section => {
+              section.reserves?.forEach(r => {
+                 myReserves.push({
+                     id: r.reserve_id,
+                     course: section.name,
+                     status: r.status,
+                     title: r.book?.book_title || 'N/A',
+                     type: r.target_group || 'Course Reserve',
+                     requester: section.teacher?.username || 'Teacher',
+                     role: 'Teacher',
+                     date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A',
+                     note: r.teacher_to_student_note || 'No notes provided.'
+                 });
+              });
+           });
+           setReserves(myReserves);
+         } catch (e) {
+           console.error("Failed to fetch student sections/reserves", e);
+         }
+      }
+    } catch (err) {
+      console.error("Failed to fetch data", err);
+    } finally {
+      setLoading(false);
+    }
+  }, [isSuperAdmin]);
+
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
 
   // Filtered books logic
   const filteredBooks = useMemo(() => {
@@ -193,41 +191,174 @@ export default function LibraryPortal() {
     });
   }, [books, searchQuery, selectedCategory]);
 
-  const handleAddBook = (e) => {
+  const [holdSearchQuery, setHoldSearchQuery] = useState('');
+  const [holdBookFilter, setHoldBookFilter] = useState('');
+  const [holdStatusFilter, setHoldStatusFilter] = useState('');
+
+  const filteredHoldRequests = useMemo(() => {
+    return holdRequests.filter(req => {
+      const q = holdSearchQuery.toLowerCase();
+      const matchQuery = !holdSearchQuery || 
+        req.bookTitle?.toLowerCase().includes(q) ||
+        req.requester?.toLowerCase().includes(q) ||
+        req.pos?.toString().toLowerCase().includes(q) ||
+        req.requesterId?.toString().toLowerCase().includes(q);
+      
+      const matchBook = !holdBookFilter || req.bookTitle === holdBookFilter;
+      const matchStatus = !holdStatusFilter || req.status === holdStatusFilter;
+
+      return matchQuery && matchBook && matchStatus;
+    });
+  }, [holdRequests, holdSearchQuery, holdBookFilter, holdStatusFilter]);
+
+  const handleCancelHold = async (holdId) => {
+    try {
+      await api.delete(`/library/holds/${holdId}`);
+      alert("Hold request cancelled.");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to cancel hold: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleAcceptHold = async (holdId) => {
+    try {
+      await api.put(`/library/holds/${holdId}/accept`);
+      alert("Hold request accepted! The book is now Ready for Pickup.");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to accept hold: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleHoldRequest = async (bookId) => {
+    try {
+      await api.post(`/library/books/${bookId}/holds`);
+      alert(`Borrow/Hold request submitted successfully!`);
+      setSelectedBook(null);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to submit request: ${err.response?.data?.error || err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleCheckout = async (e, userId, copyId) => {
+    e.preventDefault();
+    if (!userId || !copyId) {
+      alert("Please provide both Borrower ID and Copy ID.");
+      return;
+    }
+    try {
+      await api.post('/library/checkout', { user_id: userId, copy_id: copyId });
+      alert("Book checked out successfully!");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Checkout failed: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleCheckin = async (e, transactionId) => {
+    e.preventDefault();
+    if (!transactionId) {
+      alert("Please provide the Transaction ID.");
+      return;
+    }
+    try {
+      await api.post('/library/checkin', { transaction_id: transactionId });
+      alert("Book checked in successfully!");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Check-in failed: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleClearFine = async (fineId) => {
+    try {
+      await api.post('/library/fines/clear', { fine_id: fineId });
+      alert("Fine cleared successfully!");
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to clear fine: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleUpdateReserveStatus = async (reserveId, status) => {
+    try {
+      await api.put(`/library/reserves/${reserveId}/status`, { status });
+      alert(`Reserve ${status} successfully!`);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to update reserve: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleAllocateCopies = async (reserveId) => {
+    try {
+      await api.post(`/library/reserves/${reserveId}/allocate`);
+      alert(`Physical copies allocated to reserve successfully!`);
+      fetchData();
+    } catch (err) {
+      console.error(err);
+      alert(`Failed to allocate copies: ${err.response?.data?.message || err.message}`);
+    }
+  };
+
+  const handleAddBook = async (e) => {
     e.preventDefault();
     if (!newBook.title || !newBook.author || !newBook.isbn) {
       alert('Please fill in required fields (Title, Author, ISBN).');
       return;
     }
 
-    const categories = [newBook.category.toUpperCase()];
-    if (newBook.isCourseReserve) categories.push('COURSE RESERVE');
-
-    const created = {
-      id: Date.now(),
-      title: newBook.title,
-      author: newBook.author,
-      isbn: newBook.isbn,
-      location: newBook.location,
-      categories,
-      available: parseInt(newBook.copies, 10) || 1,
-      total: parseInt(newBook.copies, 10) || 1,
-      image: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=300&h=300"
-    };
-
-    setBooks([created, ...books]);
-    setNewBook({
-      title: '',
-      author: '',
-      isbn: '',
-      category: 'IT & Computer Science',
-      copies: 2,
-      location: 'Floor 2 - Shelf CS-101',
-      isCourseReserve: false
-    });
-    setShowAddBookModal(false);
-    alert(`Book "${created.title}" successfully added to the catalog!`);
-    setActiveTab('catalog');
+    try {
+      const payload = {
+        book_title: newBook.title,
+        author: newBook.author,
+        isbn: newBook.isbn,
+        physical_location: newBook.location,
+        category: newBook.category,
+        copies: parseInt(newBook.copies, 10) || 1
+      };
+      
+      const res = await api.post('/library/books', payload);
+      
+      const b = res.data.book || res.data;
+      const formatted = {
+          id: b.book_id,
+          title: b.book_title,
+          author: b.author,
+          isbn: b.isbn,
+          location: b.physical_location,
+          categories: b.category ? [b.category] : [],
+          available: b.available_copies_count ?? parseInt(newBook.copies, 10),
+          total: b.total_copies ?? parseInt(newBook.copies, 10),
+          image: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=300&h=300"
+      };
+      setBooks([formatted, ...books]);
+      
+      setNewBook({
+        title: '',
+        author: '',
+        isbn: '',
+        category: 'IT & Computer Science',
+        copies: 2,
+        location: 'Floor 2 - Shelf CS-101',
+        isCourseReserve: false
+      });
+      setShowAddBookModal(false);
+      alert(`Book "${formatted.title}" successfully added to the catalog!`);
+      setActiveTab('catalog');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to add book');
+    }
   };
 
   const categoriesList = [
@@ -238,6 +369,30 @@ export default function LibraryPortal() {
     'Literature & Arts',
     'Research & Journals'
   ];
+
+  const filteredCirculation = useMemo(() => {
+    return circulation.filter(item => {
+      const q = circulationSearch.toLowerCase();
+      return (
+        item.copyId?.toString().includes(q) ||
+        item.borrowerId?.toString().includes(q) ||
+        item.borrower?.toLowerCase().includes(q) ||
+        item.title?.toLowerCase().includes(q) ||
+        item.barcode?.toLowerCase().includes(q)
+      );
+    });
+  }, [circulation, circulationSearch]);
+
+  const filteredFines = useMemo(() => {
+    return fines.filter(item => {
+      const q = finesSearch.toLowerCase();
+      return (
+        item.refId?.toString().includes(q) ||
+        item.borrowerName?.toLowerCase().includes(q) ||
+        item.bookTitle?.toLowerCase().includes(q)
+      );
+    });
+  }, [fines, finesSearch]);
 
   return (
     <div className="w-full font-sans text-slate-800 pb-20">
@@ -293,73 +448,87 @@ export default function LibraryPortal() {
 
         {/* 2. Stats Dashboard (Vertical Stack for Mobile) */}
         <div className="flex flex-col gap-3">
-          {/* Total Titles */}
-          <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
-            <div className="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-              </svg>
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Total Titles</div>
-              <div className="text-xl font-extrabold text-[#0f172a]">{books.length}</div>
-            </div>
-          </div>
+          {loading ? (
+            Array.from({ length: isSuperAdmin ? 5 : 3 }).map((_, i) => (
+              <div key={i} className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100 animate-pulse">
+                <div className="w-12 h-12 rounded-xl bg-gray-200 shrink-0"></div>
+                <div className="flex flex-col gap-1.5 w-full py-1">
+                  <div className="h-2.5 bg-gray-200 rounded w-1/2"></div>
+                  <div className="h-5 bg-gray-200 rounded w-1/3 mt-0.5"></div>
+                </div>
+              </div>
+            ))
+          ) : (
+            <>
+              {/* Total Titles */}
+              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                <div className="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Total Titles</div>
+                  <div className="text-xl font-extrabold text-[#0f172a]">{books.length}</div>
+                </div>
+              </div>
 
-          {/* Available */}
-          <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
-            <div className="w-12 h-12 rounded-xl bg-green-50 border border-green-100 flex items-center justify-center text-green-500 shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Available</div>
-              <div className="text-xl font-extrabold text-green-600">
-                {books.reduce((acc, b) => acc + b.available, 0)} <span className="text-sm text-gray-400 font-bold">/ {books.reduce((acc, b) => acc + b.total, 0)}</span>
+              {/* Available */}
+              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                <div className="w-12 h-12 rounded-xl bg-green-50 border border-green-100 flex items-center justify-center text-green-500 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Available</div>
+                  <div className="text-xl font-extrabold text-green-600">
+                    {books.reduce((acc, b) => acc + b.available, 0)} <span className="text-sm text-gray-400 font-bold">/ {books.reduce((acc, b) => acc + b.total, 0)}</span>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
 
-          {/* Checked Out */}
-          <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
-            <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-400 shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-            </div>
-            <div>
-              <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Checked Out</div>
-              <div className="text-xl font-extrabold text-orange-500">2</div>
-            </div>
-          </div>
+              {/* Checked Out */}
+              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-400 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                </div>
+                <div>
+                  <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Checked Out</div>
+                  <div className="text-xl font-extrabold text-orange-500">2</div>
+                </div>
+              </div>
 
-          {/* Overdue Copies (Only on SuperAdmin and Admin) */}
-          {isSuperAdmin && (
-            <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
-              <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-red-500 shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Overdue Copies</div>
-                <div className="text-xl font-extrabold text-red-600">2</div>
-              </div>
-            </div>
-          )}
+              {/* Overdue Copies (Only on SuperAdmin and Admin) */}
+              {isSuperAdmin && (
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                  <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-red-500 shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Overdue Copies</div>
+                    <div className="text-xl font-extrabold text-red-600">2</div>
+                  </div>
+                </div>
+              )}
 
-          {/* Total System Fines (Only on SuperAdmin and Admin) */}
-          {isSuperAdmin && (
-            <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
-              <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-[#8B1A24] shrink-0 font-extrabold text-lg">
-                ₱
-              </div>
-              <div>
-                <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Total System Fines</div>
-                <div className="text-xl font-extrabold text-[#8B1A24]">₱150.00</div>
-              </div>
-            </div>
+              {/* Total System Fines (Only on SuperAdmin and Admin) */}
+              {isSuperAdmin && (
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                  <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-[#8B1A24] shrink-0 font-extrabold text-lg">
+                    ₱
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Total System Fines</div>
+                    <div className="text-xl font-extrabold text-[#8B1A24]">₱150.00</div>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -528,7 +697,37 @@ export default function LibraryPortal() {
 
               {/* 6. Book List (Mobile Single Column) */}
               <div className="flex flex-col gap-3 mt-2">
-                {filteredBooks.map(book => (
+                {loading ? (
+                  Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-gray-100 flex flex-col gap-4 animate-pulse">
+                      <div className="flex gap-4">
+                        <div className="w-[88px] h-[104px] shrink-0 rounded-xl bg-gray-200"></div>
+                        <div className="flex flex-col flex-1 gap-2 py-1">
+                          <div className="h-3 bg-gray-200 rounded w-1/3 mb-1"></div>
+                          <div className="h-4 bg-gray-200 rounded w-3/4 mb-1"></div>
+                          <div className="h-3 bg-gray-200 rounded w-1/2"></div>
+                          <div className="h-2 bg-gray-200 rounded w-1/3"></div>
+                          <div className="mt-auto h-3 bg-gray-200 rounded w-2/3"></div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+                        <div className="h-6 bg-gray-200 rounded-full w-1/2"></div>
+                        <div className="h-7 bg-gray-200 rounded-full w-24"></div>
+                      </div>
+                    </div>
+                  ))
+                ) : filteredBooks.length === 0 ? (
+                  <div className="bg-white rounded-[1.5rem] p-8 text-center border border-gray-100 shadow-sm">
+                    <p className="text-gray-500 font-bold text-xs">No books found matching your search.</p>
+                    <button
+                      onClick={() => { setSearchQuery(''); setSelectedCategory('All'); }}
+                      className="mt-3 px-4 py-2 bg-[#8B1A24] text-white text-[11px] font-extrabold rounded-xl cursor-pointer"
+                    >
+                      Reset Filters
+                    </button>
+                  </div>
+                ) : (
+                  filteredBooks.map(book => (
                   <div key={book.id} className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-gray-100 flex flex-col gap-4">
                     <div className="flex gap-4">
                       <div className="w-[88px] h-[104px] shrink-0 rounded-xl overflow-hidden shadow-sm border border-gray-100 bg-gray-100">
@@ -571,7 +770,8 @@ export default function LibraryPortal() {
                       </button>
                     </div>
                   </div>
-                ))}
+                ))
+               )}
               </div>
             </>
           )}
@@ -592,15 +792,42 @@ export default function LibraryPortal() {
                   Max Allowed: 0 / {user?.role === 'Teacher' ? '10' : user?.role === 'Student' ? '3' : '20'} Books
                 </div>
 
-                <div className="border border-gray-100 rounded-[1.25rem] p-6 flex flex-col items-center justify-center bg-gray-50/30">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-gray-400 mb-3">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                  </svg>
-                  <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No active book loans at this time.</h3>
-                  <p className="text-gray-500 text-[11px] font-medium leading-relaxed max-w-[250px]">
-                    Browse the catalog to find available physical books for research or coursework.
-                  </p>
-                </div>
+                {myLoans.length === 0 ? (
+                  <div className="border border-gray-100 rounded-[1.25rem] p-6 flex flex-col items-center justify-center bg-gray-50/30">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-gray-400 mb-3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                    </svg>
+                    <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No active book loans at this time.</h3>
+                    <p className="text-gray-500 text-[11px] font-medium leading-relaxed max-w-[250px]">
+                      Browse the catalog to find available physical books for research or coursework.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {myLoans.map(loan => (
+                      <div 
+                        key={loan.transaction_id} 
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 text-left shadow-xs cursor-pointer hover:border-emerald-300 transition-colors" 
+                        onClick={() => {
+                          const foundBook = books.find(b => b.id === loan.book_copy?.book_id);
+                          if (foundBook) setSelectedBook(foundBook);
+                        }}
+                      >
+                        <h4 className="font-extrabold text-[#0f172a] text-[13px] mb-1 truncate" title={loan.book_copy?.book?.book_title}>
+                          {loan.book_copy?.book?.book_title}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mb-2 font-medium">
+                          Barcode: <span className="font-extrabold text-[#0f172a]">{loan.book_copy?.barcode || `CPY-${loan.book_copy?.copy_id}`}</span>
+                        </p>
+                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-emerald-100/50">
+                          <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                            Due: {new Date(loan.due_date).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 text-center">
@@ -670,57 +897,77 @@ export default function LibraryPortal() {
 
           {activeTab === 'reserves' && (
             <>
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mt-2">
-                <div className="flex items-start gap-2 mb-2">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5 shrink-0 mt-0.5 text-[#0284c7]">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25L2.25 7.5l9.75 5.25L21.75 7.5 12 2.25zM2.25 12l9.75 5.25L21.75 12M2.25 16.5l9.75 5.25L21.75 16.5" />
-                  </svg>
-                  <h2 className="text-[17px] font-extrabold text-[#0f172a] leading-tight">Course Reserve Books & Syllabus References</h2>
+              {user?.role === 'Teacher' || user?.role === 'faculty' ? (
+                <div className="mt-2">
+                  <TeacherReservesView user={user} books={books} fetchData={fetchData} />
                 </div>
-                <p className="text-gray-500 text-[12px] leading-relaxed mb-5 font-medium">
-                  Textbooks set aside by professors for 2-Hour In-Library Desk Reference or Overnight study.
-                </p>
-                <div className="flex justify-center">
-                  <button
-                    onClick={() => setShowReserveModal(true)}
-                    className="bg-[#8B1A24] text-white text-[12px] font-extrabold py-2.5 px-5 rounded-xl hover:bg-[#6b141c] transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3.5 h-3.5">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                    </svg>
-                    Request Course Reserve
-                  </button>
-                </div>
-              </div>
-
-              <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mt-3">
-                <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-3 leading-tight">Registered Course Reserves & Professor Allocations (2)</h3>
-                <div className="w-full border-t border-gray-100 mb-4"></div>
-                <div className="flex flex-col gap-3">
-                  {mockReserves.map(reserve => (
-                    <div key={reserve.id} className="border border-[#bae6fd] rounded-[1.25rem] p-4 bg-white shadow-sm flex flex-col gap-2">
-                      <div className="flex gap-2 mb-1">
-                        <span className="bg-[#0369a1] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                          COURSE: {reserve.course}
-                        </span>
-                        <span className="border border-green-300 bg-green-50 text-green-700 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
-                          {reserve.status}
-                        </span>
-                      </div>
-                      <h4 className="font-extrabold text-[13px] text-[#0f172a] leading-tight">{reserve.title}</h4>
-
-                      <div className="text-[11px] text-gray-500 mt-1 flex flex-col gap-1">
-                        <p>Reserve Type: <span className="font-extrabold text-[#0f172a]">{reserve.type}</span></p>
-                        <p>Requested by: <span className="font-extrabold text-[#0f172a]">{reserve.requester}</span> <span className="text-gray-400">({reserve.role}) on {reserve.date}</span></p>
-                      </div>
-
-                      <div className="border border-gray-100 rounded-xl p-3 text-[11px] text-gray-500 italic mt-2 bg-gray-50">
-                        "{reserve.note}"
-                      </div>
+              ) : (
+                <>
+                  <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mt-2">
+                    <div className="flex items-start gap-2 mb-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5 shrink-0 mt-0.5 text-[#0284c7]">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25L2.25 7.5l9.75 5.25L21.75 7.5 12 2.25zM2.25 12l9.75 5.25L21.75 12M2.25 16.5l9.75 5.25L21.75 16.5" />
+                      </svg>
+                      <h2 className="text-[17px] font-extrabold text-[#0f172a] leading-tight">Course Reserve Books & Syllabus References</h2>
                     </div>
-                  ))}
-                </div>
-              </div>
+                    <p className="text-gray-500 text-[12px] leading-relaxed mb-5 font-medium">
+                      Textbooks set aside by professors for 2-Hour In-Library Desk Reference or Overnight study.
+                    </p>
+
+                  </div>
+
+                  <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100 mt-3">
+                    <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-3 leading-tight">Registered Course Reserves & Professor Allocations ({reserves.length})</h3>
+                    <div className="w-full border-t border-gray-100 mb-4"></div>
+                    <div className="flex flex-col gap-3">
+                      {reserves.map(reserve => (
+                        <div key={reserve.id} className="border border-[#bae6fd] rounded-[1.25rem] p-4 bg-white shadow-sm flex flex-col gap-2">
+                          <div className="flex gap-2 mb-1">
+                            <span className="bg-[#0369a1] text-white text-[9px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                              COURSE: {reserve.course}
+                            </span>
+                            <span className="border border-green-300 bg-green-50 text-green-700 text-[9px] font-extrabold px-2 py-0.5 rounded-full">
+                              {reserve.status}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-[13px] text-[#0f172a] leading-tight">{reserve.title}</h4>
+
+                          <div className="text-[11px] text-gray-500 mt-1 flex flex-col gap-1">
+                            <p>Reserve Type: <span className="font-extrabold text-[#0f172a]">{reserve.type}</span></p>
+                            <p>Requested by: <span className="font-extrabold text-[#0f172a]">{reserve.requester}</span> <span className="text-gray-400">({reserve.role}) on {new Date(reserve.date).toLocaleDateString()}</span></p>
+                          </div>
+
+                          <div className="border border-gray-100 rounded-xl p-3 text-[11px] text-gray-500 italic mt-2 bg-gray-50">
+                            "{reserve.note}"
+                          </div>
+
+                          {/* Admin Actions */}
+                          {isSuperAdmin && (
+                            <div className="flex flex-col gap-2 mt-2 pt-2 border-t border-gray-100">
+                              {reserve.status === 'pending' && (
+                                <div className="flex gap-2">
+                                  <button onClick={() => handleUpdateReserveStatus(reserve.id, 'approved')} className="flex-1 bg-emerald-600 text-white text-[10px] font-extrabold py-2 px-3 rounded-lg hover:bg-emerald-700">Approve</button>
+                                  <button onClick={() => handleUpdateReserveStatus(reserve.id, 'denied')} className="flex-1 bg-red-600 text-white text-[10px] font-extrabold py-2 px-3 rounded-lg hover:bg-red-700">Deny</button>
+                                </div>
+                              )}
+                              {reserve.status === 'approved' && (
+                                <button onClick={() => handleAllocateCopies(reserve.id)} className="w-full bg-[#0369a1] text-white text-[10px] font-extrabold py-2 px-3 rounded-lg hover:bg-[#0284c7]">
+                                  Allocate Physical Copies
+                                </button>
+                              )}
+                              {(reserve.status === 'approved' || reserve.status === 'active') && (
+                                <button onClick={() => handleUpdateReserveStatus(reserve.id, 'released')} className="w-full bg-amber-500 text-white text-[10px] font-extrabold py-2 px-3 rounded-lg hover:bg-amber-600">
+                                  Release Copies Back to Gen. Circulation
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
             </>
           )}
 
@@ -737,8 +984,37 @@ export default function LibraryPortal() {
                 </span>
               </div>
 
+              {/* Mobile Checkout Form */}
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-6">
+                <h3 className="font-extrabold text-[13px] text-[#0f172a] mb-3">Check-Out Book Copy</h3>
+                <form className="flex flex-col gap-3" onSubmit={(e) => {
+                  handleCheckout(e, checkoutData.userId, checkoutData.copyId);
+                  setCheckoutData({ userId: '', copyId: '' });
+                }}>
+                  <input 
+                    type="text" 
+                    placeholder="Borrower User ID" 
+                    value={checkoutData.userId} 
+                    onChange={(e) => setCheckoutData({...checkoutData, userId: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[12px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
+                    required
+                  />
+                  <input 
+                    type="text" 
+                    placeholder="Book Copy ID" 
+                    value={checkoutData.copyId} 
+                    onChange={(e) => setCheckoutData({...checkoutData, copyId: e.target.value})} 
+                    className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[12px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
+                    required
+                  />
+                  <button type="submit" className="w-full bg-[#8B1A24] text-white text-[12px] font-extrabold py-2.5 rounded-xl hover:bg-[#6b141c] transition-colors cursor-pointer shadow-xs">
+                    Check Out
+                  </button>
+                </form>
+              </div>
+
               <div className="flex flex-col gap-4">
-                {mockCirculation.map(item => (
+                {circulation.map(item => (
                   <div key={item.id} className="border border-gray-200 rounded-[1.25rem] p-4 flex flex-col gap-3 bg-white">
                     <div className="flex justify-between items-start gap-2">
                       <div>
@@ -762,7 +1038,7 @@ export default function LibraryPortal() {
                     </div>
 
                     <button
-                      onClick={() => alert(`Checked-in copy ${item.copyId} successfully!`)}
+                      onClick={(e) => handleCheckin(e, item.id)}
                       className="w-full mt-1 bg-[#047857] text-white text-[12px] font-extrabold py-2.5 rounded-xl hover:bg-[#065f46] transition-colors cursor-pointer"
                     >
                       Check-In Copy
@@ -791,51 +1067,30 @@ export default function LibraryPortal() {
                 </div>
 
                 <div className="flex flex-col gap-3">
-                  <div className="border border-gray-200 rounded-[1.25rem] p-4 bg-white flex flex-col gap-3 shadow-sm">
-                    <div className="flex gap-3">
-                      <div className="bg-[#8B1A24] text-white rounded-lg w-[42px] h-[42px] flex flex-col items-center justify-center shrink-0">
-                        <span className="text-[9px] font-extrabold uppercase leading-tight">POS</span>
-                        <span className="text-[13px] font-extrabold leading-tight">#1</span>
+                  {holdRequests.map(request => (
+                    <div key={request.id} className="border border-gray-200 rounded-[1.25rem] p-4 bg-white flex flex-col gap-3 shadow-sm">
+                      <div className="flex gap-3">
+                        <div className="bg-[#8B1A24] text-white rounded-lg w-[42px] h-[42px] flex flex-col items-center justify-center shrink-0">
+                          <span className="text-[9px] font-extrabold uppercase leading-tight">POS</span>
+                          <span className="text-[13px] font-extrabold leading-tight">{request.pos}</span>
+                        </div>
+                        <div>
+                          <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">{request.bookTitle}</h3>
+                          <p className="text-[11px] text-gray-500 font-medium">
+                            Requested by: <span className="font-extrabold text-[#0f172a]">{request.requester}</span> ({request.role}) on {request.date}
+                          </p>
+                        </div>
                       </div>
-                      <div>
-                        <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">Clean Code: A Handbook of Agile Software Craftsmanship</h3>
-                        <p className="text-[11px] text-gray-500 font-medium">
-                          Requested by: <span className="font-extrabold text-[#0f172a]">Juan Dela Cruz</span> (Student) on 2026-08-01
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex justify-center mt-1">
-                      <button
-                        onClick={() => alert('Cancelled hold request.')}
-                        className="bg-gray-100 text-[#1e293b] text-[11px] font-extrabold px-5 py-2 rounded-xl hover:bg-gray-200 transition-colors cursor-pointer"
-                      >
-                        Cancel Hold
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="border border-gray-200 rounded-[1.25rem] p-4 bg-white flex flex-col gap-3 shadow-sm">
-                    <div className="flex gap-3">
-                      <div className="bg-[#8B1A24] text-white rounded-lg w-[42px] h-[42px] flex flex-col items-center justify-center shrink-0">
-                        <span className="text-[9px] font-extrabold uppercase leading-tight">POS</span>
-                        <span className="text-[13px] font-extrabold leading-tight">#2</span>
-                      </div>
-                      <div>
-                        <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">Data Structures and Algorithms in C++</h3>
-                        <p className="text-[11px] text-gray-500 font-medium">
-                          Requested by: <span className="font-extrabold text-[#0f172a]">Prof. Maria Santos</span> (Teacher) on 2026-08-02
-                        </p>
+                      <div className="flex justify-center mt-1">
+                        <button
+                          onClick={() => handleCancelHold(request.id)}
+                          className="bg-gray-100 text-[#1e293b] text-[11px] font-extrabold px-5 py-2 rounded-xl hover:bg-gray-200 transition-colors cursor-pointer"
+                        >
+                          Cancel Hold
+                        </button>
                       </div>
                     </div>
-                    <div className="flex justify-center mt-1">
-                      <button
-                        onClick={() => alert('Cancelled hold request.')}
-                        className="bg-gray-100 text-[#1e293b] text-[11px] font-extrabold px-5 py-2 rounded-xl hover:bg-gray-200 transition-colors cursor-pointer"
-                      >
-                        Cancel Hold
-                      </button>
-                    </div>
-                  </div>
+                  ))}
                 </div>
               </div>
 
@@ -849,6 +1104,16 @@ export default function LibraryPortal() {
                     ₱10.00 / Overdue Day
                   </span>
                 </div>
+                {fines.length > 0 && (
+                  <div className="flex justify-end mb-4">
+                    <button 
+                      onClick={handleClearFine}
+                      className="bg-[#be123c] text-white text-[11px] font-extrabold py-2 px-4 rounded-xl hover:bg-[#9f1239] transition-colors cursor-pointer shadow-xs"
+                    >
+                      Clear All Fines
+                    </button>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-3">
                   <div className="border border-gray-200 rounded-[1.25rem] p-4 bg-white shadow-sm flex flex-col gap-2">
@@ -1056,75 +1321,99 @@ export default function LibraryPortal() {
         {/* 2. Desktop Key Metric Stat Cards */}
         <div className="flex flex-col gap-3">
           <div className={`grid grid-cols-1 sm:grid-cols-2 ${isSuperAdmin ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3.5`}>
-            {/* Total Titles */}
-            <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
-              <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">TOTAL TITLES</div>
-                <div className="text-[22px] font-black text-[#0f172a] leading-none mt-0.5">{books.length}</div>
-              </div>
-            </div>
-
-            {/* Available */}
-            <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
-              <div className="w-10 h-10 rounded-xl bg-emerald-50/80 border border-emerald-100 flex items-center justify-center text-emerald-500 shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">AVAILABLE</div>
-                <div className="text-[22px] font-black text-emerald-600 leading-none mt-0.5">
-                  {books.reduce((acc, b) => acc + b.available, 0)} <span className="text-xs text-slate-400 font-bold">/ {books.reduce((acc, b) => acc + b.total, 0)}</span>
+            {loading ? (
+              Array.from({ length: isSuperAdmin ? 4 : 3 }).map((_, i) => (
+                <div key={i} className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70 animate-pulse">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200 shrink-0"></div>
+                  <div className="flex flex-col gap-1.5 w-full py-1">
+                    <div className="h-2 bg-slate-200 rounded w-1/2"></div>
+                    <div className="h-5 bg-slate-200 rounded w-1/4 mt-0.5"></div>
+                  </div>
                 </div>
-              </div>
-            </div>
-
-            {/* Checked Out */}
-            <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
-              <div className="w-10 h-10 rounded-xl bg-amber-50/80 border border-amber-100 flex items-center justify-center text-amber-500 shrink-0">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-              </div>
-              <div>
-                <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">CHECKED OUT</div>
-                <div className="text-[22px] font-black text-amber-500 leading-none mt-0.5">2</div>
-              </div>
-            </div>
-
-            {/* Overdue Copies (Only on SuperAdmin and Admin) */}
-            {isSuperAdmin && (
-              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
-                <div className="w-10 h-10 rounded-xl bg-rose-50/80 border border-rose-100 flex items-center justify-center text-rose-500 shrink-0">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
+              ))
+            ) : (
+              <>
+                {/* Total Titles */}
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                  <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">TOTAL TITLES</div>
+                    <div className="text-[22px] font-black text-[#0f172a] leading-none mt-0.5">{books.length}</div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">OVERDUE COPIES</div>
-                  <div className="text-[22px] font-black text-rose-600 leading-none mt-0.5">2</div>
+
+                {/* Available */}
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                  <div className="w-10 h-10 rounded-xl bg-emerald-50/80 border border-emerald-100 flex items-center justify-center text-emerald-500 shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">AVAILABLE</div>
+                    <div className="text-[22px] font-black text-emerald-600 leading-none mt-0.5">
+                      {books.reduce((acc, b) => acc + b.available, 0)} <span className="text-xs text-slate-400 font-bold">/ {books.reduce((acc, b) => acc + b.total, 0)}</span>
+                    </div>
+                  </div>
                 </div>
-              </div>
+
+                {/* Checked Out */}
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                  <div className="w-10 h-10 rounded-xl bg-amber-50/80 border border-amber-100 flex items-center justify-center text-amber-500 shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">CHECKED OUT</div>
+                    <div className="text-[22px] font-black text-amber-500 leading-none mt-0.5">2</div>
+                  </div>
+                </div>
+
+                {/* Overdue Copies (Only on SuperAdmin and Admin) */}
+                {isSuperAdmin && (
+                  <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                    <div className="w-10 h-10 rounded-xl bg-rose-50/80 border border-rose-100 flex items-center justify-center text-rose-500 shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">OVERDUE COPIES</div>
+                      <div className="text-[22px] font-black text-rose-600 leading-none mt-0.5">2</div>
+                    </div>
+                  </div>
+                )}
+              </>
             )}
           </div>
 
           {/* Row 2: Total System Fines (Only on SuperAdmin and Admin) */}
           {isSuperAdmin && (
             <div className="w-full sm:w-64">
-              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
-                <div className="w-10 h-10 rounded-xl bg-rose-50/80 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0 font-black text-base">
-                  ₱
+              {loading ? (
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70 animate-pulse">
+                  <div className="w-10 h-10 rounded-xl bg-slate-200 shrink-0"></div>
+                  <div className="flex flex-col gap-1.5 w-full py-1">
+                    <div className="h-2 bg-slate-200 rounded w-1/2"></div>
+                    <div className="h-5 bg-slate-200 rounded w-1/2 mt-0.5"></div>
+                  </div>
                 </div>
-                <div>
-                  <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">TOTAL SYSTEM FINES</div>
-                  <div className="text-[22px] font-black text-[#8B1A24] leading-none mt-0.5">₱150.00</div>
+              ) : (
+                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                  <div className="w-10 h-10 rounded-xl bg-rose-50/80 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0 font-black text-base">
+                    ₱
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">TOTAL SYSTEM FINES</div>
+                    <div className="text-[22px] font-black text-[#8B1A24] leading-none mt-0.5">₱150.00</div>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           )}
         </div>
@@ -1294,7 +1583,28 @@ export default function LibraryPortal() {
               </div>
 
               {/* Book Cards Grid - 3 Columns Exactly Matching User Mockup */}
-              {filteredBooks.length === 0 ? (
+              {loading ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <div key={i} className="bg-white rounded-[1.25rem] p-4 shadow-xs border border-slate-200/70 flex flex-col justify-between animate-pulse">
+                      <div className="flex gap-3.5">
+                        <div className="w-[76px] h-[92px] shrink-0 rounded-lg bg-slate-200"></div>
+                        <div className="flex flex-col flex-1 gap-1.5 py-1">
+                          <div className="h-2.5 bg-slate-200 rounded w-1/3 mb-1"></div>
+                          <div className="h-3.5 bg-slate-200 rounded w-3/4 mb-0.5"></div>
+                          <div className="h-2.5 bg-slate-200 rounded w-1/2"></div>
+                          <div className="h-2 bg-slate-200 rounded w-1/3"></div>
+                          <div className="mt-auto h-2.5 bg-slate-200 rounded w-2/3"></div>
+                        </div>
+                      </div>
+                      <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 mt-3">
+                        <div className="h-5 bg-slate-200 rounded-full w-1/2"></div>
+                        <div className="h-6 bg-slate-200 rounded-full w-20"></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : filteredBooks.length === 0 ? (
                 <div className="bg-white rounded-[1.25rem] p-10 text-center border border-slate-200/70 shadow-xs">
                   <p className="text-slate-500 font-bold text-xs">No books found matching your search.</p>
                   <button
@@ -1407,15 +1717,39 @@ export default function LibraryPortal() {
                   </div>
                 </div>
 
-                <div className="border border-slate-100 rounded-2xl py-12 px-6 flex flex-col items-center justify-center bg-slate-50/50 text-center">
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-9 h-9 text-slate-300 mb-2.5">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                  </svg>
-                  <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No active book loans at this time.</h3>
-                  <p className="text-slate-400 text-[11px] font-medium">
-                    Browse the catalog to find available physical books for research or coursework.
-                  </p>
-                </div>
+                {myLoans.length === 0 ? (
+                  <div className="border border-slate-100 rounded-2xl py-12 px-6 flex flex-col items-center justify-center bg-slate-50/50 text-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-9 h-9 text-slate-300 mb-2.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
+                    </svg>
+                    <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No active book loans at this time.</h3>
+                    <p className="text-slate-400 text-[11px] font-medium">
+                      Browse the catalog to find available physical books for research or coursework.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {myLoans.map(loan => (
+                      <div 
+                        key={loan.transaction_id} 
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 shadow-xs cursor-pointer hover:border-emerald-300 transition-colors" 
+                        onClick={() => setSelectedLoan(loan)}
+                      >
+                        <h4 className="font-extrabold text-[#0f172a] text-[13px] mb-1 truncate" title={loan.book_copy?.book?.book_title}>
+                          {loan.book_copy?.book?.book_title}
+                        </h4>
+                        <p className="text-[11px] text-slate-500 mb-2 font-medium">
+                          Barcode: <span className="font-extrabold text-[#0f172a]">{loan.book_copy?.barcode || `CPY-${loan.book_copy?.copy_id}`}</span>
+                        </p>
+                        <div className="flex items-center justify-between mt-3 pt-3 border-t border-emerald-100/50">
+                          <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                            Due: {new Date(loan.due_date).toLocaleDateString()}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Bottom 2-Column Grid: Fines Ledger & Book Hold Requests */}
@@ -1462,19 +1796,47 @@ export default function LibraryPortal() {
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-4 h-4 text-amber-500">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
                         </svg>
-                        <h2 className="text-[15px] font-extrabold text-[#0f172a]">Your Book Hold Requests (0)</h2>
+                        <h2 className="text-[15px] font-extrabold text-[#0f172a]">Your Book Hold Requests ({myHolds.length})</h2>
                       </div>
                       <span className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider">
                         Queue Status
                       </span>
                     </div>
 
-                    <div className="border border-slate-100 rounded-xl py-6 px-4 bg-white flex flex-col items-center justify-center text-center shadow-2xs mb-3.5">
-                      <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No active book hold requests.</h3>
-                      <p className="text-slate-400 text-[10.5px] font-medium">
-                        When a book is out of stock, click "View Copies" to join the hold queue.
-                      </p>
-                    </div>
+                    {myHolds.length === 0 ? (
+                      <div className="border border-slate-100 rounded-xl py-6 px-4 bg-white flex flex-col items-center justify-center text-center shadow-2xs mb-3.5">
+                        <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No active book hold requests.</h3>
+                        <p className="text-slate-400 text-[10.5px] font-medium">
+                          When a book is out of stock, click "View Copies" to join the hold queue.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="flex flex-col gap-2.5 mb-3.5">
+                        {myHolds.map(hold => (
+                          <div key={hold.id} className="border border-slate-200/80 rounded-xl p-3.5 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
+                            <div>
+                              <div className="flex items-center gap-2 mb-0.5">
+                                <span className={`text-white text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none ${hold.status === 'fulfilled' ? 'bg-emerald-600' : hold.status === 'pending_approval' ? 'bg-orange-500' : 'bg-[#8B1A24]'}`}>
+                                  {hold.pos}
+                                </span>
+                                <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight">
+                                  {hold.bookTitle}
+                                </h3>
+                              </div>
+                              <p className="text-[10.5px] text-slate-400 font-medium">
+                                Requested on {new Date(hold.date).toLocaleDateString()}
+                              </p>
+                            </div>
+                            <button
+                              onClick={() => handleCancelHold(hold.id)}
+                              className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[10.5px] font-extrabold py-1.5 px-3.5 rounded-xl transition-colors cursor-pointer self-end sm:self-auto shrink-0 shadow-xs"
+                            >
+                              Cancel Hold
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
 
                   <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3.5 flex gap-2.5 items-start mt-auto">
@@ -1492,56 +1854,76 @@ export default function LibraryPortal() {
 
           {activeTab === 'reserves' && (
             <div className="flex flex-col gap-4">
-              <div className="bg-white rounded-[1.25rem] p-5 shadow-xs border border-slate-200/70 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4 text-sky-600">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25L2.25 7.5l9.75 5.25L21.75 7.5 12 2.25zM2.25 12l9.75 5.25L21.75 12M2.25 16.5l9.75 5.25L21.75 16.5" />
-                    </svg>
-                    <h2 className="text-[16px] font-extrabold text-[#0f172a]">Course Reserve Books & Syllabus References</h2>
-                  </div>
-                  <p className="text-slate-400 text-[11px] font-medium">
-                    Textbooks set aside by professors for 2-Hour In-Library Desk Reference or Overnight study.
-                  </p>
-                </div>
-
-                <button
-                  onClick={() => setShowReserveModal(true)}
-                  className="bg-[#8B1A24] text-white text-[11px] font-extrabold py-2 px-4 rounded-xl hover:bg-[#6b141c] transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer shadow-xs"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-                  </svg>
-                  Request Course Reserve
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {mockReserves.map(reserve => (
-                  <div key={reserve.id} className="border border-sky-200 rounded-[1.25rem] p-4 bg-white shadow-xs flex flex-col justify-between gap-2.5">
+              {user?.role === 'Teacher' || user?.role === 'faculty' ? (
+                <TeacherReservesView user={user} books={books} fetchData={fetchData} />
+              ) : (
+                <>
+                  <div className="bg-white rounded-[1.25rem] p-5 shadow-xs border border-slate-200/70 flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
                     <div>
-                      <div className="flex gap-1.5 mb-1.5">
-                        <span className="bg-[#0369a1] text-white text-[8.5px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                          COURSE: {reserve.course}
-                        </span>
-                        <span className="border border-emerald-300 bg-emerald-50 text-emerald-700 text-[8.5px] font-extrabold px-2 py-0.5 rounded-full">
-                          {reserve.status}
-                        </span>
+                      <div className="flex items-center gap-2 mb-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4 text-sky-600">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25L2.25 7.5l9.75 5.25L21.75 7.5 12 2.25zM2.25 12l9.75 5.25L21.75 12M2.25 16.5l9.75 5.25L21.75 16.5" />
+                        </svg>
+                        <h2 className="text-[16px] font-extrabold text-[#0f172a]">Course Reserve Books & Syllabus References</h2>
                       </div>
-                      <h4 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1.5">{reserve.title}</h4>
-
-                      <div className="text-[10.5px] text-slate-500 flex flex-col gap-0.5">
-                        <p>Reserve Type: <span className="font-extrabold text-[#0f172a]">{reserve.type}</span></p>
-                        <p>Requested by: <span className="font-extrabold text-[#0f172a]">{reserve.requester}</span> <span className="text-slate-400">({reserve.role}) on {reserve.date}</span></p>
-                      </div>
+                      <p className="text-slate-400 text-[11px] font-medium">
+                        Textbooks set aside by professors for 2-Hour In-Library Desk Reference or Overnight study.
+                      </p>
                     </div>
 
-                    <div className="border border-slate-100 rounded-xl p-2.5 text-[10.5px] text-slate-600 italic bg-slate-50">
-                      "{reserve.note}"
-                    </div>
+
                   </div>
-                ))}
-              </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {reserves.map(reserve => (
+                      <div key={reserve.id} className="border border-sky-200 rounded-[1.25rem] p-4 bg-white shadow-xs flex flex-col justify-between gap-2.5">
+                        <div>
+                          <div className="flex gap-1.5 mb-1.5">
+                            <span className="bg-[#0369a1] text-white text-[8.5px] font-extrabold px-2 py-0.5 rounded-full uppercase tracking-wider">
+                              COURSE: {reserve.course}
+                            </span>
+                            <span className="border border-emerald-300 bg-emerald-50 text-emerald-700 text-[8.5px] font-extrabold px-2 py-0.5 rounded-full">
+                              {reserve.status}
+                            </span>
+                          </div>
+                          <h4 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1.5">{reserve.title}</h4>
+
+                          <div className="text-[10.5px] text-slate-500 flex flex-col gap-0.5">
+                            <p>Reserve Type: <span className="font-extrabold text-[#0f172a]">{reserve.type}</span></p>
+                            <p>Requested by: <span className="font-extrabold text-[#0f172a]">{reserve.requester}</span> <span className="text-slate-400">({reserve.role}) on {reserve.date}</span></p>
+                          </div>
+                        </div>
+
+                        <div className="border border-slate-100 rounded-xl p-2.5 text-[10.5px] text-slate-600 italic bg-slate-50">
+                          "{reserve.note}"
+                        </div>
+
+                        {/* Admin Actions */}
+                        {isSuperAdmin && (
+                          <div className="flex flex-wrap gap-2 mt-1 pt-3 border-t border-slate-100">
+                            {reserve.status === 'pending' && (
+                              <>
+                                <button onClick={() => handleUpdateReserveStatus(reserve.id, 'approved')} className="bg-emerald-600 text-white text-[10.5px] font-extrabold py-1.5 px-3 rounded-lg hover:bg-emerald-700 cursor-pointer">Approve Reserve</button>
+                                <button onClick={() => handleUpdateReserveStatus(reserve.id, 'denied')} className="bg-rose-600 text-white text-[10.5px] font-extrabold py-1.5 px-3 rounded-lg hover:bg-rose-700 cursor-pointer">Deny</button>
+                              </>
+                            )}
+                            {reserve.status === 'approved' && (
+                              <button onClick={() => handleAllocateCopies(reserve.id)} className="bg-[#0369a1] text-white text-[10.5px] font-extrabold py-1.5 px-3 rounded-lg hover:bg-[#0284c7] cursor-pointer">
+                                Allocate Physical Copies
+                              </button>
+                            )}
+                            {(reserve.status === 'approved' || reserve.status === 'active') && (
+                              <button onClick={() => handleUpdateReserveStatus(reserve.id, 'released')} className="bg-amber-500 text-white text-[10.5px] font-extrabold py-1.5 px-3 rounded-lg hover:bg-amber-600 cursor-pointer">
+                                Release Copies Back to Gen. Circulation
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -1560,6 +1942,17 @@ export default function LibraryPortal() {
                 </span>
               </div>
 
+              {/* Search Filter for Circulation */}
+              <div className="mb-4">
+                <input 
+                  type="text" 
+                  placeholder="Search by ID, Name, Book, or Barcode..." 
+                  value={circulationSearch} 
+                  onChange={(e) => setCirculationSearch(e.target.value)} 
+                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                />
+              </div>
+
               <div className="overflow-x-auto">
                 <table className="w-full text-left border-collapse">
                   <thead>
@@ -1572,7 +1965,7 @@ export default function LibraryPortal() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100/70">
-                    {mockCirculation.map(item => (
+                    {filteredCirculation.map(item => (
                       <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="py-3.5 px-3 align-middle">
                           <div className="font-mono text-[12px] font-extrabold text-[#0f172a]">{item.copyId}</div>
@@ -1593,7 +1986,7 @@ export default function LibraryPortal() {
                         </td>
                         <td className="py-3.5 px-3 align-middle">
                           <button
-                            onClick={() => alert(`Checked-in copy ${item.copyId} successfully!`)}
+                            onClick={(e) => handleCheckin(e, item.id)}
                             className="bg-[#047857] hover:bg-[#065f46] text-white text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer shadow-xs whitespace-nowrap"
                           >
                             Check-In Copy
@@ -1619,37 +2012,134 @@ export default function LibraryPortal() {
                       Reserves queue placement when stock is 0.
                     </p>
                   </div>
-                  <span className="border border-amber-300 bg-amber-50/60 text-amber-800 text-[10px] font-extrabold px-3 py-1 rounded-lg">
-                    2 Requests
-                  </span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <select
+                      value={holdStatusFilter}
+                      onChange={(e) => setHoldStatusFilter(e.target.value)}
+                      className="w-36 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all text-[#0f172a]"
+                    >
+                      <option value="">All Statuses</option>
+                      <option value="pending_approval">Getting Approval</option>
+                      <option value="fulfilled">Ready for Pickup</option>
+                      <option value="pending">Waitlisted</option>
+                    </select>
+
+                    <select
+                      value={holdBookFilter}
+                      onChange={(e) => setHoldBookFilter(e.target.value)}
+                      className="w-40 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all text-[#0f172a] truncate"
+                    >
+                      <option value="">All Books</option>
+                      {[...new Set(holdRequests.map(r => r.bookTitle))].map((title, i) => (
+                        <option key={i} value={title}>{title}</option>
+                      ))}
+                    </select>
+
+                    <div className="relative">
+                      <input 
+                        type="text" 
+                        placeholder="Search borrower or ID..." 
+                        value={holdSearchQuery}
+                        onChange={(e) => setHoldSearchQuery(e.target.value)}
+                        className="w-48 pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all text-[#0f172a]"
+                      />
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+                      </svg>
+                    </div>
+                    <span className="border border-amber-300 bg-amber-50/60 text-amber-800 text-[10px] font-extrabold px-3 py-1 rounded-lg">
+                      {holdRequests.length} Requests
+                    </span>
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-3">
-                  {mockHoldRequests.map(request => (
+                  {filteredHoldRequests.map(request => (
                     <div key={request.id} className="border border-slate-200/80 rounded-xl p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                       <div>
                         <div className="flex items-center gap-2 mb-0.5">
-                          <span className="bg-[#8B1A24] text-white text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none">
-                            POS {request.pos}
+                          <span className={`${request.status === 'pending_approval' ? 'bg-orange-500' : request.status === 'fulfilled' ? 'bg-emerald-500' : 'bg-[#8B1A24]'} text-white text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none`}>
+                            {request.status === 'pending_approval' ? 'Getting Approval' : request.status === 'fulfilled' ? 'Ready for Pickup' : `POS ${request.pos}`}
                           </span>
                           <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight">
                             {request.bookTitle}
                           </h3>
                         </div>
                         <p className="text-[11px] text-slate-400 font-medium">
-                          Requested by: <span className="font-extrabold text-[#0f172a]">{request.requester}</span> ({request.role}) on {request.date}
+                          Requested by: <span className="font-extrabold text-[#0f172a]">{request.requester}</span> ({request.role}) on {new Date(request.date).toLocaleDateString()}
                         </p>
                       </div>
 
-                      <button
-                        onClick={() => alert(`Cancelled hold request for "${request.bookTitle}".`)}
-                        className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer self-end sm:self-auto shrink-0"
-                      >
-                        Cancel Hold
-                      </button>
+                      <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                        {request.status === 'pending_approval' && (
+                          <button
+                            onClick={() => handleAcceptHold(request.id)}
+                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer shadow-xs"
+                          >
+                            Accept
+                          </button>
+                        )}
+                        {request.status === 'fulfilled' && (
+                          <button
+                            onClick={(e) => handleCheckout(e, request.requesterId, request.copyId)}
+                            className="bg-[#8B1A24] hover:bg-[#6b141c] text-white text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer shadow-xs"
+                          >
+                            Check Out
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleCancelHold(request.id)}
+                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer"
+                        >
+                          Cancel
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
+              </div>
+
+              {/* Desktop Checkout Form (Option B) */}
+              <div className="bg-white border border-slate-200/70 rounded-[1.25rem] p-6 shadow-xs">
+                <h3 className="font-extrabold text-[15px] text-[#0f172a] mb-4">Check-Out Book Copy (Option B)</h3>
+                <form className="flex flex-col sm:flex-row gap-3" onSubmit={(e) => {
+                  handleCheckout(e, checkoutData.userId, checkoutData.copyId);
+                  setCheckoutData({ userId: '', bookId: '', copyId: '' });
+                }}>
+                  <input 
+                    type="text" 
+                    placeholder="Borrower User ID" 
+                    value={checkoutData.userId} 
+                    onChange={(e) => setCheckoutData({...checkoutData, userId: e.target.value})} 
+                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
+                    required
+                  />
+                  <select 
+                    value={checkoutData.bookId} 
+                    onChange={(e) => setCheckoutData({...checkoutData, bookId: e.target.value, copyId: ''})} 
+                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
+                    required
+                  >
+                    <option value="">-- Select Book --</option>
+                    {books.map(b => (
+                      <option key={b.id} value={b.id}>{b.title}</option>
+                    ))}
+                  </select>
+                  <select 
+                    value={checkoutData.copyId} 
+                    onChange={(e) => setCheckoutData({...checkoutData, copyId: e.target.value})} 
+                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
+                    required
+                  >
+                    <option value="">-- Select Barcode/Copy --</option>
+                    {checkoutData.bookId && books.find(b => b.id.toString() === checkoutData.bookId.toString())?.copies.filter(c => c.availability_status === 'available' || c.availability_status === 'on_hold').map(c => (
+                      <option key={c.copy_id} value={c.copy_id}>{c.barcode || `CPY-${c.copy_id}`}</option>
+                    ))}
+                  </select>
+                  <button type="submit" className="bg-[#8B1A24] text-white text-[13px] font-extrabold py-2.5 px-8 rounded-xl hover:bg-[#6b141c] transition-colors cursor-pointer shadow-xs whitespace-nowrap">
+                    Check Out
+                  </button>
+                </form>
               </div>
 
               {/* 2. Unpaid Library Fines Card (Full Width Data Table) */}
@@ -1666,6 +2156,24 @@ export default function LibraryPortal() {
                   </span>
                 </div>
 
+                {fines.length > 0 && (
+                  <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
+                    <input 
+                      type="text" 
+                      placeholder="Search fines by ID, Name, or Book..." 
+                      value={finesSearch} 
+                      onChange={(e) => setFinesSearch(e.target.value)} 
+                      className="w-full sm:w-1/2 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#be123c]"
+                    />
+                    <button 
+                      onClick={handleClearFine}
+                      className="bg-[#be123c] text-white text-[12px] font-extrabold py-2 px-5 rounded-xl hover:bg-[#9f1239] transition-colors cursor-pointer shadow-xs whitespace-nowrap"
+                    >
+                      Clear All Fines
+                    </button>
+                  </div>
+                )}
+
                 <div className="overflow-x-auto">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -1678,7 +2186,7 @@ export default function LibraryPortal() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100/70">
-                      {mockFines.map(fine => (
+                      {filteredFines.map(fine => (
                         <tr key={fine.id} className="hover:bg-slate-50/50 transition-colors">
                           <td className="py-3.5 px-3 align-middle font-mono text-[11.5px] font-extrabold text-[#0f172a]">
                             {fine.refId}
@@ -1867,22 +2375,40 @@ export default function LibraryPortal() {
             </div>
 
             <div className="flex flex-col gap-2 mb-4 max-h-48 overflow-y-auto pr-1">
-              {Array.from({ length: selectedBook.total }).map((_, idx) => {
-                const isAvailable = idx < selectedBook.available;
-                const copyBarcode = `CPY-${selectedBook.isbn.slice(-4)}-0${idx + 1}`;
+              {selectedBook.copies && selectedBook.copies.map((copy) => {
+                const isAvailable = copy.availability_status === 'available';
+                const isHeld = copy.availability_status === 'on_hold';
+                const isCheckedOut = copy.availability_status === 'checked_out';
+                
+                let statusStyle = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
+                let statusText = 'Available on Shelf';
+                
+                if (isHeld) {
+                  statusStyle = 'bg-blue-50 text-blue-700 border border-blue-200';
+                  statusText = 'Currently on Hold';
+                } else if (isCheckedOut) {
+                  statusStyle = 'bg-amber-50 text-amber-700 border border-amber-200';
+                  statusText = 'Already Borrowed';
+                } else if (!isAvailable) {
+                  statusStyle = 'bg-slate-50 text-slate-700 border border-slate-200';
+                  statusText = copy.availability_status;
+                }
+
                 return (
-                  <div key={idx} className="border border-slate-200 rounded-xl p-2.5 flex items-center justify-between bg-white shadow-2xs">
+                  <div key={copy.copy_id} className="border border-slate-200 rounded-xl p-2.5 flex items-center justify-between bg-white shadow-2xs">
                     <div>
-                      <div className="font-mono text-[11px] font-extrabold text-[#0f172a]">{copyBarcode}</div>
-                      <div className="text-[9px] text-slate-400 font-medium">RFID Tag: #RF-{1000 + selectedBook.id * 10 + idx}</div>
+                      <div className="font-mono text-[11px] font-extrabold text-[#0f172a]">{copy.barcode || `CPY-${copy.copy_id}`}</div>
+                      <div className="text-[9px] text-slate-400 font-medium">Condition: {copy.condition}</div>
                     </div>
-                    <span className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-full ${isAvailable ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-amber-50 text-amber-700 border border-amber-200'
-                      }`}>
-                      {isAvailable ? 'Available on Shelf' : 'Checked Out'}
+                    <span className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-full ${statusStyle}`}>
+                      {statusText}
                     </span>
                   </div>
                 );
               })}
+              {(!selectedBook.copies || selectedBook.copies.length === 0) && (
+                <div className="text-center text-sm text-slate-500 py-4">No physical copies found.</div>
+              )}
             </div>
 
             <div className="flex justify-end gap-2.5 pt-2.5 border-t border-slate-100">
@@ -1893,82 +2419,88 @@ export default function LibraryPortal() {
                 Close
               </button>
               <button
-                onClick={() => {
-                  alert(`Borrow/Hold request submitted for "${selectedBook.title}"!`);
-                  setSelectedBook(null);
-                }}
+                onClick={() => handleHoldRequest(selectedBook.id)}
                 className="px-4 py-2 bg-[#8B1A24] text-white rounded-xl text-[11px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-xs cursor-pointer"
               >
-                Request Checkout / Hold
+                {selectedBook.available > 0 ? "Borrow / Reserve Book" : "Join Waitlist"}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Modal: Request Course Reserve */}
-      {showReserveModal && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-[1.5rem] p-5 shadow-2xl border border-slate-100 max-w-md w-full">
-            <div className="flex justify-between items-start mb-3">
+
+      {/* Modal: Active Loan Details */}
+      {selectedLoan && (
+        <div 
+          onClick={(e) => { if (e.target === e.currentTarget) setSelectedLoan(null); }}
+          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
+        >
+          <div className="bg-white rounded-[1.5rem] p-6 shadow-2xl border border-slate-100 max-w-md w-full relative">
+            <div className="flex justify-between items-start mb-4">
               <div>
-                <span className="inline-block bg-[#0369a1] text-white text-[8.5px] font-black uppercase px-2 py-0.5 rounded tracking-wider mb-1">
-                  FACULTY REQUEST
+                <span className="inline-block bg-[#e0f2fe] text-[#0369a1] border border-[#bae6fd] text-[9.5px] font-black uppercase px-2.5 py-0.5 rounded tracking-wider mb-1">
+                  LOAN DETAILS
                 </span>
-                <h2 className="text-[16px] font-extrabold text-[#0f172a] leading-tight">
-                  Request Course Reserve Allocation
+                <h2 className="text-[19px] font-black text-[#0f172a] leading-tight tracking-tight pr-4">
+                  {selectedLoan.book_copy?.book?.book_title}
                 </h2>
+                <p className="text-slate-400 text-[11px] font-medium mt-0.5">by {selectedLoan.book_copy?.book?.author}</p>
               </div>
-              <button
-                onClick={() => setShowReserveModal(false)}
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
+              <button 
+                onClick={() => setSelectedLoan(null)}
+                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer transition-colors"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              alert('Course reserve request submitted for faculty syllabus review!');
-              setShowReserveModal(false);
-            }} className="flex flex-col gap-3">
-              <div>
-                <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Course Code *</label>
-                <input required type="text" placeholder="e.g. IT 311 or CS 102" className="w-full border border-slate-200 rounded-xl py-1.5 px-3 text-xs font-medium text-[#0f172a]" />
+            <div className="flex flex-col gap-3">
+              <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                <span className="text-[11px] font-extrabold text-slate-500 uppercase">Barcode / Copy</span>
+                <span className="text-[12px] font-black text-[#0f172a] bg-slate-100 px-2 py-0.5 rounded">
+                  {selectedLoan.book_copy?.barcode || `CPY-${selectedLoan.book_copy?.copy_id}`}
+                </span>
               </div>
-              <div>
-                <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Book Title / Reference *</label>
-                <input required type="text" placeholder="e.g. Database Management Systems 4th Ed." className="w-full border border-slate-200 rounded-xl py-1.5 px-3 text-xs font-medium text-[#0f172a]" />
+              <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                <span className="text-[11px] font-extrabold text-slate-500 uppercase">Borrow Date</span>
+                <span className="text-[12px] font-bold text-[#0f172a]">
+                  {new Date(selectedLoan.transaction_date).toLocaleDateString()}
+                </span>
               </div>
-              <div>
-                <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Reserve Type</label>
-                <select className="w-full border border-slate-200 rounded-xl py-1.5 px-3 text-xs font-bold text-[#0f172a] bg-white">
-                  <option>2-Hour In-Library Desk Reference</option>
-                  <option>Overnight Checkout Reserve</option>
-                  <option>3-Day Extended Course Reserve</option>
-                </select>
+              <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                <span className="text-[11px] font-extrabold text-slate-500 uppercase">Due Date</span>
+                <span className="text-[12px] font-black text-[#8B1A24]">
+                  {new Date(selectedLoan.due_date).toLocaleDateString()}
+                </span>
               </div>
-              <div>
-                <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Notes / Syllabus Reference</label>
-                <textarea rows="2" placeholder="Required textbook for upcoming midterm exam..." className="w-full border border-slate-200 rounded-xl py-1.5 px-3 text-xs font-medium text-[#0f172a]"></textarea>
+              <div className="flex justify-between items-center py-2 border-b border-slate-100">
+                <span className="text-[11px] font-extrabold text-slate-500 uppercase">Physical Condition</span>
+                <span className="text-[12px] font-bold text-[#0f172a] capitalize">
+                  {selectedLoan.book_copy?.physical_condition || 'new'}
+                </span>
               </div>
+            </div>
 
-              <div className="flex justify-end gap-2.5 pt-2.5 border-t border-slate-100 mt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowReserveModal(false)}
-                  className="px-3.5 py-1.5 border border-slate-200 rounded-xl text-xs font-extrabold hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-3.5 py-1.5 bg-[#8B1A24] text-white rounded-xl text-xs font-extrabold hover:bg-[#6b141c] cursor-pointer"
-                >
-                  Submit Request
-                </button>
+            <div className="mt-5 p-3.5 bg-amber-50 border border-amber-200/60 rounded-xl">
+              <div className="flex gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 text-amber-600 shrink-0 mt-0.5">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
+                </svg>
+                <p className="text-[11px] font-medium text-amber-800 leading-relaxed">
+                  <strong>Return Instructions:</strong> Return this book to the Circulation Desk on or before the due date to avoid late fees of ₱10.00/day.
+                </p>
               </div>
-            </form>
+            </div>
+
+            <div className="flex justify-end gap-2.5 mt-5">
+              <button
+                onClick={() => setSelectedLoan(null)}
+                className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-extrabold hover:bg-slate-50 cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
           </div>
         </div>
       )}

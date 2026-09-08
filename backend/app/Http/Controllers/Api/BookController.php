@@ -35,9 +35,16 @@ class BookController extends Controller
             'category' => 'required|string|max:100',
             'isbn' => 'required|string|unique:books,isbn|max:20',
             'physical_location' => 'required|string|max:255',
+            'copies' => 'nullable|integer|min:1'
         ]);
 
         $book = $this->inventoryService->createBook($validated);
+        
+        if (!empty($validated['copies']) && $validated['copies'] > 0) {
+            $this->inventoryService->addCopies($book->book_id, $validated['copies']);
+            // Refresh book to get updated total_copies
+            $book->refresh();
+        }
 
         return response()->json($book, 201);
     }

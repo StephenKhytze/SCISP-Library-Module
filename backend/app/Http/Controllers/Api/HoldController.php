@@ -21,7 +21,7 @@ class HoldController extends Controller
      */
     public function store(Request $request, int $bookId)
     {
-        $userId = \Illuminate\Support\Facades\Auth::id();
+        $userId = $request->attributes->get('user_id');
 
         try {
             $hold = $this->holdService->placeHold($userId, $bookId);
@@ -44,9 +44,9 @@ class HoldController extends Controller
      */
     public function destroy(Request $request, int $id)
     {
-        $userId = \Illuminate\Support\Facades\Auth::id();
-        $role = $request->attributes->get('role');
-        $isAdmin = in_array($role, ['administrator', 'superadmin']);
+        $userId = $request->attributes->get('user_id');
+        $role = strtolower($request->attributes->get('role', ''));
+        $isAdmin = in_array($role, ['admin', 'super admin']);
 
         try {
             $hold = $this->holdService->cancelHold($id, $userId, $isAdmin);
@@ -59,6 +59,59 @@ class HoldController extends Controller
         } catch (Exception $e) {
             return response()->json([
                 'message' => 'Failed to cancel hold.',
+                'error' => $e->getMessage()
+            ], 422);
+        }
+    }
+
+    /**
+     * Get the authenticated user's holds.
+     */
+    public function myHolds(Request $request)
+    {
+        $userId = $request->attributes->get('user_id');
+
+        $holds = \App\Models\Hold::with(['book'])
+            ->where('user_id', $userId)
+            ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        return response()->json($holds);
+    }
+
+    /**
+     * Accept a pending hold.
+     */
+    public function acceptHold(Request $request, int $id)
+    {
+        $role = strtolower($request->attributes->get('role', ''));
+        $isAdmin = in_array($role, ['admin', 'super admin']);
+
+        if (!$isAdmin) {
+            return response()->json(['message' => 'Unauthorized.'], 403);
+        }
+
+        try {
+            $hold = \Illuminate\Support\Facades\DB::transaction(function () use ($id) {
+                $hold = \App\Models\Hold::findOrFail($id);
+
+                if ($hold->status !== 'pending_approval') {
+                    throw new Exception("Only holds waiting for approval can be accepted.");
+                }
+
+                $hold->update(['status' => 'fulfilled']);
+                return $hold;
+            });
+
+            return response()->json([
+                'message' => 'Hold accepted and is now Ready for Pickup.',
+                'hold' => $hold
+            ], 200);
+
+        } catch (Exception $e) {
+            return response()->json([
+                'message' => 'Failed to accept hold.',
                 'error' => $e->getMessage()
             ], 422);
         }
