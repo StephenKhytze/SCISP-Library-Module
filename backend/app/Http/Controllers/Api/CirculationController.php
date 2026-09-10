@@ -113,25 +113,84 @@ class CirculationController extends Controller
     public function myLoans(Request $request)
     {
         $userId = $request->attributes->get('user_id');
-        
+
         $loans = Transaction::with(['bookCopy.book'])
             ->where('user_id', $userId)
             ->where('status', 'active')
+            ->orderByDesc('transaction_id')
             ->get();
-            
+
         return response()->json($loans);
     }
 
     /**
-     * Get all active loans (Admin only).
+     * The signed-in user's own transaction history (active + returned).
+     * Always scoped to the caller — never another user's records.
+     */
+    public function myHistory(Request $request)
+    {
+        $userId = $request->attributes->get('user_id');
+
+        $history = Transaction::with(['bookCopy.book'])
+            ->where('user_id', $userId)
+            ->orderByDesc('transaction_id')
+            ->get();
+
+        return response()->json($history);
+    }
+
+    /**
+     * Get loans (Admin only).
+     *
+     * Defaults to active loans, which is what the circulation desk shows.
+     * Pass ?status=all for full history, or ?status=returned.
      */
     public function index(Request $request)
     {
-        $loans = Transaction::with(['bookCopy.book', 'user'])
+        $status = $request->query('status', 'active');
+
+        $query = Transaction::with(['bookCopy.book', 'user'])
+            ->orderByDesc('transaction_id');
+
+        if (in_array($status, ['active', 'returned'], true)) {
+            $query->where('status', $status);
+        }
+
+        return response()->json($query->get());
+    }
+
+    /**
+     * Lightweight self summary: balance, active loans and the borrowing limit.
+     * Backs the borrower-facing counters so the UI never hardcodes them.
+     */
+    public function mySummary(Request $request)
+    {
+        $userId = $request->attributes->get('user_id');
+        $user = \App\Models\User::find($userId);
+
+        $dbRole = $this->circulationService->normalizeRole($user->role ?? 'student');
+        $limit = $this->circulationService->getBorrowLimitForRole($dbRole);
+
+        $activeLoans = Transaction::where('user_id', $userId)->where('status', 'active')->count();
+
+        $overdueLoans = Transaction::where('user_id', $userId)
             ->where('status', 'active')
-            ->get();
-            
-        return response()->json($loans);
+            ->whereNotNull('due_date')
+            ->where('due_date', '<', now())
+            ->count();
+
+        return response()->json([
+            'user_id' => $user?->user_id,
+            'username' => $user?->username,
+            'role' => $dbRole,
+            'total_fines' => round((float) ($user->total_fines ?? 0), 2),
+            'active_loans' => $activeLoans,
+            'overdue_loans' => $overdueLoans,
+            'borrow_limit' => $limit,
+            'holds' => \App\Models\Hold::where('user_id', $userId)
+                ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
+                ->count(),
+        ]);
     }
 
     public function activeHolds(Request $request)

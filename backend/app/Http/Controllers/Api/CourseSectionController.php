@@ -13,7 +13,7 @@ class CourseSectionController extends Controller
     public function index(Request $request)
     {
         $teacherId = $request->attributes->get('user_id');
-        $sections = CourseSection::with(['students.student', 'reserves.book', 'reserves.copies'])
+        $sections = CourseSection::with(['students.student', 'reserves.book', 'reserves.copies.activeTransaction'])
             ->where('teacher_id', $teacherId)
             ->get();
             
@@ -23,16 +23,7 @@ class CourseSectionController extends Controller
     // Get all students for dropdown
     public function getStudents()
     {
-        // Ensure mock students exist in the DB for the dropdown
-        \App\Models\User::firstOrCreate(
-            ['username' => 'DelaCruz_Juan_C1234'],
-            ['role' => 'student', 'password' => bcrypt('password'), 'status' => 'active']
-        );
-        \App\Models\User::firstOrCreate(
-            ['username' => 'guest'],
-            ['role' => 'student', 'password' => bcrypt('password'), 'status' => 'active']
-        );
-
+        // Student identities are provisioned by MockPersonaSeeder, never during a request.
         $students = \App\Models\User::whereIn('role', ['Student', 'student'])->get(['user_id', 'username']);
         return response()->json($students);
     }
@@ -96,7 +87,7 @@ class CourseSectionController extends Controller
         $sections = CourseSection::whereHas('students', function($q) use ($studentId) {
             $q->where('student_id', $studentId);
         })->with(['teacher', 'reserves' => function($q) {
-            $q->where('status', 'approved')->with('book', 'copies');
+            $q->where('status', 'approved')->with('book', 'copies.activeTransaction');
         }])->get();
 
         return response()->json($sections);

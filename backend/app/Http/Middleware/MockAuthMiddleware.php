@@ -34,7 +34,13 @@ class MockAuthMiddleware
             }
         }
 
-        $username = $request->header('X-Mock-Username', '2012-00000-SYS');
+        $username = $request->header('X-Mock-Username');
+
+        if (! $username) {
+            return response()->json([
+                'message' => 'Unauthorized. Missing X-Mock-Username header.',
+            ], 401);
+        }
 
         // Map frontend role string to database enum
         $dbRole = 'student';
@@ -45,11 +51,30 @@ class MockAuthMiddleware
             $dbRole = 'faculty';
         }
 
-        // Find or create user to get a valid user_id
-        $userModel = \App\Models\User::firstOrCreate(
-            ['username' => $username],
-            ['role' => $dbRole, 'password' => bcrypt('password'), 'status' => 'active']
-        );
+        // Identity must already exist. Mock auth resolves users; it never creates them.
+        // Seed personas with: php artisan db:seed --class=MockPersonaSeeder
+        $userModel = \App\Models\User::where('username', $username)->first();
+
+        if (! $userModel) {
+            return response()->json([
+                'message' => 'Unauthorized. Unknown user.',
+            ], 401);
+        }
+
+        if ($userModel->status !== 'active') {
+            return response()->json([
+                'message' => 'Forbidden. User account is disabled.',
+            ], 403);
+        }
+
+        // The supplied role must correspond to the stored role, compared at the mapped
+        // database-role level. Admin and Super Admin both map to 'administrator'; the raw
+        // header is preserved below so route gates can still tell them apart.
+        if ($userModel->role !== $dbRole) {
+            return response()->json([
+                'message' => 'Forbidden. Supplied role does not match the user account.',
+            ], 403);
+        }
 
         // Pass the role and user_id down to the controllers
         $request->attributes->set('role', $role);

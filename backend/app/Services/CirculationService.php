@@ -25,14 +25,51 @@ class CirculationService
      */
     protected function getDueDateForRole(string $role)
     {
-        $days = match ($role) {
-            'student' => 7,
+        $days = match ($this->normalizeRole($role)) {
             'faculty' => 14,
-            'administrator', 'superadmin' => 30,
+            'administrator' => 30,
             default => 7,
         };
 
         return now()->addDays($days);
+    }
+
+    /**
+     * Reduce any role spelling to the three database roles.
+     *
+     * Roles reach this service in several vocabularies: the raw request header
+     * ("Admin", "Super Admin", "Teacher") and the users.role enum
+     * ("administrator", "faculty", "student"). Mirrors MockAuthMiddleware.
+     */
+    public function normalizeRole(?string $role): string
+    {
+        $normalized = strtolower(trim((string) $role));
+
+        if (str_contains($normalized, 'admin')) {
+            return 'administrator';
+        }
+
+        if (str_contains($normalized, 'faculty') || str_contains($normalized, 'teacher')) {
+            return 'faculty';
+        }
+
+        return 'student';
+    }
+
+    /** Admin and Super Admin are the same inside the Library module. */
+    protected function isLibrarian(?string $role): bool
+    {
+        return $this->normalizeRole($role) === 'administrator';
+    }
+
+    /** Maximum concurrent active loans, or null when unlimited. */
+    public function getBorrowLimitForRole(string $dbRole): ?int
+    {
+        return match ($dbRole) {
+            'student' => 3,
+            'faculty' => 10,
+            default => null, // Librarians are not limited.
+        };
     }
 
     /**
@@ -55,16 +92,54 @@ class CirculationService
                 throw new Exception("Book copy not found.");
             }
 
+            // The borrower is resolved before any eligibility rule, because every
+            // rule below is about the BORROWER — never the librarian operating the desk.
+            $user = User::find($userId);
+
+            if (!$user) {
+                throw new Exception("Borrower not found.");
+            }
+
+            $borrowerRole = $this->normalizeRole($user->role);
+
+            // Outstanding fines block further borrowing until a librarian settles them.
+            if ((float) $user->total_fines > 0) {
+                throw new Exception(
+                    'This borrower has an outstanding balance of PHP '
+                    .number_format((float) $user->total_fines, 2)
+                    .'. Record a payment or waive it before borrowing.'
+                );
+            }
+
+            // Role-based active loan limit.
+            $limit = $this->getBorrowLimitForRole($borrowerRole);
+
+            if ($limit !== null) {
+                $activeLoans = Transaction::where('user_id', $userId)
+                    ->where('status', 'active')
+                    ->count();
+
+                if ($activeLoans >= $limit) {
+                    throw new Exception("Borrowing limit reached: {$activeLoans} of {$limit} active loans.");
+                }
+            }
+
             $isReserved = false;
             if ($copy->reserve_id) {
                 $reserve = \App\Models\CourseReserve::find($copy->reserve_id);
                 if ($reserve && $reserve->status === 'approved') {
                     $isReserved = true;
-                    $studentInClass = \App\Models\CourseSectionStudent::where('section_id', $reserve->section_id)
-                                        ->where('student_id', $userId)
-                                        ->exists();
-                    if (!$studentInClass && !in_array($role, ['superadmin', 'admin', 'faculty'])) {
-                        throw new Exception("This copy is strictly reserved for a course section. You are not assigned to it.");
+
+                    // Only a student borrower must be enrolled in the reserve's section.
+                    // Faculty borrowers are eligible; the operator's role is irrelevant.
+                    if ($borrowerRole === 'student') {
+                        $studentInClass = \App\Models\CourseSectionStudent::where('section_id', $reserve->section_id)
+                            ->where('student_id', $userId)
+                            ->exists();
+
+                        if (!$studentInClass) {
+                            throw new Exception("This copy is reserved for a course section the borrower is not enrolled in.");
+                        }
                     }
                 }
             }
@@ -83,8 +158,6 @@ class CirculationService
                     throw new Exception("This copy is currently not available for checkout.");
                 }
             }
-
-            $user = User::findOrFail($userId);
 
             // Update the copy status
             $copy->update(['availability_status' => 'checked_out']);
@@ -155,10 +228,10 @@ class CirculationService
             $fine = $this->finesCalculator->calculateFine($transaction->due_date, $returnDate);
 
             if ($fine > 0) {
-                // Lock the user to apply fine safely
+                // Lock the user to apply fine safely. users.total_fines is the
+                // authoritative balance; no separate fine ledger is kept.
                 $user = User::where('user_id', $transaction->user_id)->lockForUpdate()->first();
                 $user->increment('total_fines', $fine);
-                $transaction->status = 'overdue'; // We can mark it overdue or just returned
             }
 
             $transaction->status = 'returned';
@@ -200,13 +273,23 @@ class CirculationService
 
             $isReserved = $transaction->bookCopy && $transaction->bookCopy->reserve_id !== null;
 
-            if ($isReserved && $role === 'faculty') {
-                $reserve = \App\Models\CourseReserve::find($transaction->bookCopy->reserve_id);
-                if ($reserve->user_id !== $userId) {
-                    throw new Exception("You are not the teacher for this reserved book.");
+            // Librarians may renew any loan; everyone else only their own.
+            $isLibrarian = $this->isLibrarian($role);
+            $isOwnLoan = (int) $transaction->user_id === (int) $userId;
+
+            if (! $isLibrarian && ! $isOwnLoan) {
+                // Existing course-reserve allowance (frozen feature): the teacher who
+                // owns the reserve may renew a loan on one of its copies.
+                $ownsReserve = false;
+
+                if ($isReserved) {
+                    $reserve = \App\Models\CourseReserve::find($transaction->bookCopy->reserve_id);
+                    $ownsReserve = $reserve && (int) $reserve->user_id === (int) $userId;
                 }
-            } else if ($transaction->user_id !== $userId && !in_array($role, ['superadmin', 'admin'])) {
-                throw new Exception("You are not authorized to renew this book.");
+
+                if (! $ownsReserve) {
+                    throw new Exception("You are not authorized to renew this book.");
+                }
             }
 
             if (!$isReserved) {

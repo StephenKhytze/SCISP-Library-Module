@@ -44,7 +44,14 @@ class BookCopyController extends Controller
             'availability_status' => 'sometimes|in:available,checked_out,on_hold,lost,damaged',
         ]);
 
-        $copy = $this->inventoryService->updateCopyStatus($id, $validated);
+        try {
+            $copy = $this->inventoryService->updateCopyStatus($id, $validated);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Could not update copy.',
+                'error' => $e->getMessage(),
+            ], 422);
+        }
 
         return response()->json($copy);
     }

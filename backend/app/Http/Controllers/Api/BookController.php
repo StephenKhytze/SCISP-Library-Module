@@ -20,8 +20,18 @@ class BookController extends Controller
      */
     public function index(Request $request)
     {
-        $filters = $request->only(['title', 'author', 'category', 'isbn']);
+        $filters = $request->only(['search', 'title', 'author', 'category', 'isbn', 'per_page']);
+
         return response()->json($this->inventoryService->searchBooks($filters));
+    }
+
+    /**
+     * Distinct categories present in the catalog, so filter chips reflect
+     * real data instead of a hardcoded list.
+     */
+    public function categories()
+    {
+        return response()->json($this->inventoryService->categories());
     }
 
     /**

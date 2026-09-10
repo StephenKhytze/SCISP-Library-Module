@@ -14,6 +14,38 @@ class Transaction extends Model
     protected $primaryKey = 'transaction_id';
 
     /**
+     * Overdue state is DERIVED at read time, never stored.
+     * Fines are only written to users.total_fines on check-in.
+     */
+    protected $appends = ['is_overdue', 'days_overdue', 'estimated_fine'];
+
+    public function getIsOverdueAttribute(): bool
+    {
+        return $this->status === 'active'
+            && $this->due_date !== null
+            && $this->due_date->isPast();
+    }
+
+    public function getDaysOverdueAttribute(): int
+    {
+        if (! $this->is_overdue) {
+            return 0;
+        }
+
+        return app(\App\Services\FinesCalculator::class)->overdueDays($this->due_date, now());
+    }
+
+    /** What the fine WOULD be if returned right now. Not persisted. */
+    public function getEstimatedFineAttribute(): float
+    {
+        if (! $this->is_overdue) {
+            return 0.00;
+        }
+
+        return app(\App\Services\FinesCalculator::class)->calculateFine($this->due_date, now());
+    }
+
+    /**
      * Get the attributes that should be cast.
      *
      * @return array<string, string>

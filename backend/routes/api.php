@@ -80,12 +80,18 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
     
     // Public Catalog Search (Authenticated users)
     Route::get('/books', [\App\Http\Controllers\Api\BookController::class, 'index']);
+    Route::get('/categories', [\App\Http\Controllers\Api\BookController::class, 'categories']);
     Route::get('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'show']);
     
     // My Loans & Holds
     Route::get('/loans/me', [\App\Http\Controllers\Api\CirculationController::class, 'myLoans']);
+    Route::get('/loans/me/history', [\App\Http\Controllers\Api\CirculationController::class, 'myHistory']);
     Route::post('/loans/renew', [\App\Http\Controllers\Api\CirculationController::class, 'renew']);
     Route::get('/holds/me', [\App\Http\Controllers\Api\HoldController::class, 'myHolds']);
+
+    // Own summary (balance, active loans, borrow limit) and own fine balance.
+    Route::get('/me/summary', [\App\Http\Controllers\Api\CirculationController::class, 'mySummary']);
+    Route::get('/fines/me', [\App\Http\Controllers\Api\FinesController::class, 'myFines']);
     
     // Automated Hold Queue (Authenticated users)
     Route::post('/books/{id}/holds', [\App\Http\Controllers\Api\HoldController::class, 'store']);
@@ -95,15 +101,25 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
     Route::get('/sections/me', [\App\Http\Controllers\Api\CourseSectionController::class, 'mySections']);
     Route::get('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'index']);
     Route::post('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'store']);
-    Route::get('/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'getStudents']);
+    // SEC-05: the student directory is roster tooling, not borrower-facing.
+    // Faculty need it for the course-section roster UI; librarians may also use it.
+    // Ordinary students must not be able to enumerate every other student.
+    Route::get('/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'getStudents'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
     Route::post('/sections/{sectionId}/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'addStudent']);
     Route::delete('/sections/{sectionId}/students/{studentId}', [\App\Http\Controllers\Api\CourseSectionController::class, 'removeStudent']);
 
     // Course Reserves
-    Route::get('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'index']);
-    Route::post('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'store']);
-    Route::put('/reserves/{id}/status', [\App\Http\Controllers\Api\ReserveController::class, 'updateStatus']); // Admin approve/deny & Teacher release
-    Route::post('/reserves/{id}/allocate', [\App\Http\Controllers\Api\ReserveController::class, 'allocateCopies']); // Admin allocate
+    // Faculty request a reserve for a section they own; that ownership check lives in
+    // ReserveController::store. Admin/Super Admin may request for any section.
+    // The admin-only listing (GET /reserves) is registered in the admin group below.
+    Route::post('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'store'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
+
+    // Admin/Super Admin may approve, deny or release. Faculty may release ONLY their own
+    // reserve — that ownership check lives in ReserveController::updateStatus.
+    Route::put('/reserves/{id}/status', [\App\Http\Controllers\Api\ReserveController::class, 'updateStatus'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
     
     // Admin Inventory Management & Circulation
     Route::middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin')->group(function () {
@@ -111,7 +127,11 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
         Route::put('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'update']);
         Route::post('/books/{id}/copies', [\App\Http\Controllers\Api\BookCopyController::class, 'store']);
         Route::put('/copies/{id}', [\App\Http\Controllers\Api\BookCopyController::class, 'update']);
-        
+
+        // Course Reserves (Admin only)
+        Route::get('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'index']);
+        Route::post('/reserves/{id}/allocate', [\App\Http\Controllers\Api\ReserveController::class, 'allocateCopies']);
+
         // Circulation
         Route::get('/circulation', [\App\Http\Controllers\Api\CirculationController::class, 'index']);
         Route::get('/holds', [\App\Http\Controllers\Api\CirculationController::class, 'activeHolds']);
@@ -119,8 +139,8 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
         Route::post('/checkout', [\App\Http\Controllers\Api\CirculationController::class, 'checkout']);
         Route::post('/checkin', [\App\Http\Controllers\Api\CirculationController::class, 'checkin']);
 
-        // Fines
+        // Fines — balance lives on users.total_fines; settlement records Paid or Waived.
         Route::get('/fines', [\App\Http\Controllers\Api\FinesController::class, 'index']);
-        Route::post('/fines/clear', [\App\Http\Controllers\Api\FinesController::class, 'clear']);
+        Route::post('/fines/settle', [\App\Http\Controllers\Api\FinesController::class, 'settle']);
     });
 });

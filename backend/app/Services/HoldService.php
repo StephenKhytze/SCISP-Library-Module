@@ -95,10 +95,37 @@ class HoldService
 
             // Note: In a real system, you'd trigger a notification/email to the user here.
 
+            $this->resequenceQueue($bookId);
+
             return true;
         }
 
         return false;
+    }
+
+    /**
+     * Renumber the remaining waitlist to 1..N.
+     *
+     * Promotions and cancellations otherwise leave gaps, so a queue could read
+     * "#2, #3" with no #1. Order was always correct; the displayed position was not.
+     */
+    protected function resequenceQueue(int $bookId): void
+    {
+        $pending = Hold::where('book_id', $bookId)
+            ->where('status', 'pending')
+            ->orderBy('queue_position')
+            ->orderBy('hold_id')
+            ->get();
+
+        $position = 1;
+
+        foreach ($pending as $hold) {
+            if ((int) $hold->queue_position !== $position) {
+                $hold->update(['queue_position' => $position]);
+            }
+
+            $position++;
+        }
     }
 
     /**
@@ -128,11 +155,18 @@ class HoldService
                 $wasHoldFulfilled = $this->advanceQueue($bookId, $copyId);
 
                 if (!$wasHoldFulfilled) {
-                    // No one else is waiting, make it available again
-                    $copy = BookCopy::findOrFail($copyId);
-                    $copy->update(['availability_status' => 'available']);
+                    // No one else is waiting, make it available again. This is also how a
+                    // librarian frees a copy stuck behind an abandoned hold.
+                    $copy = BookCopy::find($copyId);
+
+                    if ($copy && $copy->availability_status === 'on_hold') {
+                        $copy->update(['availability_status' => 'available']);
+                    }
                 }
             }
+
+            // Close any gap this cancellation left in the waitlist.
+            $this->resequenceQueue($bookId);
 
             return $hold;
         });

@@ -35,7 +35,7 @@ function App() {
       <Routes>
         {/* Auth Route without Layout */}
         <Route path="/auth" element={<PublicRoute><Login /></PublicRoute>} />
-        
+
         {/* Main Routes wrapped in the template Layout */}
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />

@@ -1,26 +1,37 @@
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import api from '../../api';
 import TeacherReservesView from './TeacherReservesView';
-
-// Keeping mock data for fallback or reference if needed, but we will use state.
-const initialBooks = [];
+import AdminFinesPanel from './AdminFinesPanel';
+import AdminInventoryPanel from './AdminInventoryPanel';
+import HoldQueuePanel from './HoldQueuePanel';
 
 export default function LibraryPortal() {
   const [activeTab, setActiveTab] = useState('catalog');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  
+
   const [books, setBooks] = useState([]);
   const [circulation, setCirculation] = useState([]);
   const [reserves, setReserves] = useState([]);
   const [holdRequests, setHoldRequests] = useState([]);
-  const [fines, setFines] = useState([]);
+  const [finesData, setFinesData] = useState({ debtors: [], total_outstanding: 0, daily_rate: 10 });
   const [myLoans, setMyLoans] = useState([]);
+  const [myHistory, setMyHistory] = useState([]);
+  const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  // Server-side catalog search + pagination, so results are not capped at one page.
+  const [categories, setCategories] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, total: 0 });
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
+  // Admin circulation list: active only, or full history.
+  const [circulationScope, setCirculationScope] = useState('active');
 
   // Modals
   const [selectedBook, setSelectedBook] = useState(null);
-  const [showQRModal, setShowQRModal] = useState(false);
   const [showAddBookModal, setShowAddBookModal] = useState(false);
 
   // New Book Form State
@@ -36,42 +47,65 @@ export default function LibraryPortal() {
 
   const [checkoutData, setCheckoutData] = useState({ userId: '', bookId: '', copyId: '' });
   const [circulationSearch, setCirculationSearch] = useState('');
-  const [finesSearch, setFinesSearch] = useState('');
   const [myHolds, setMyHolds] = useState([]);
   const [selectedLoan, setSelectedLoan] = useState(null);
-  
+
   const userStr = localStorage.getItem('user');
   const user = userStr ? JSON.parse(userStr) : null;
-  const isSuperAdmin = !user || user?.role === 'Super Admin' || user?.role === 'super_admin' || user?.role === 'Admin' || user?.role === 'admin';
+
+  // Admin and Super Admin have identical Library permissions ("librarian").
+  // Absence of a stored user is NOT treated as admin.
+  const normalizedRole = String(user?.role || '').toLowerCase();
+  const isSuperAdmin = normalizedRole.includes('admin');
+  const isFaculty = normalizedRole.includes('teacher') || normalizedRole.includes('faculty');
+
+  const peso = (n) => `₱${Number(n || 0).toFixed(2)}`;
+
+  const formatBook = (b) => ({
+    id: b.book_id,
+    title: b.book_title,
+    author: b.author,
+    isbn: b.isbn,
+    location: b.physical_location,
+    categories: b.category ? [b.category] : [],
+    available: b.available_copies_count ?? 0,
+    total: b.total_copies ?? 0,
+    copies: b.copies || [],
+    image: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=80&w=300&h=300"
+  });
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
-      // Fetch books, my loans, and my holds concurrently
-      const [booksRes, myLoansRes, myHoldsRes] = await Promise.all([
-        api.get('/library/books'),
+      setLoadError('');
+
+      const bookParams = { page, per_page: 12 };
+      if (debouncedSearch) bookParams.search = debouncedSearch;
+      if (selectedCategory !== 'All') bookParams.category = selectedCategory;
+
+      const [booksRes, myLoansRes, myHoldsRes, historyRes, summaryRes, categoriesRes] = await Promise.all([
+        api.get('/library/books', { params: bookParams }),
         api.get('/library/loans/me'),
-        api.get('/library/holds/me')
+        api.get('/library/holds/me'),
+        api.get('/library/loans/me/history'),
+        api.get('/library/me/summary'),
+        api.get('/library/categories')
       ]);
-      
-      // Extract data array from Laravel paginated response or direct array
-      const booksArray = Array.isArray(booksRes.data) ? booksRes.data : (booksRes.data.data || []);
-      
-      const formattedBooks = booksArray.map(b => ({
-        id: b.book_id,
-        title: b.book_title,
-        author: b.author,
-        isbn: b.isbn,
-        location: b.physical_location,
-        categories: b.category ? [b.category] : [],
-        available: b.available_copies_count ?? 0,
-        total: b.total_copies ?? 0,
-        copies: b.copies || [],
-        image: "https://images.unsplash.com/photo-1555066931-4365d14bab8c?auto=format&fit=crop&q=80&w=300&h=300"
-      }));
-      setBooks(formattedBooks);
+
+      const payload = booksRes.data || {};
+      const booksArray = Array.isArray(payload) ? payload : (payload.data || []);
+
+      setBooks(booksArray.map(formatBook));
+      setPagination({
+        current_page: payload.current_page ?? 1,
+        last_page: payload.last_page ?? 1,
+        total: payload.total ?? booksArray.length,
+      });
+      setCategories(categoriesRes.data || []);
       setMyLoans(myLoansRes.data);
-      
+      setMyHistory(historyRes.data || []);
+      setSummary(summaryRes.data || null);
+
       setMyHolds(myHoldsRes.data.map(h => ({
         id: h.hold_id,
         pos: h.status === 'pending_approval' ? 'Waiting for Approval' : (h.queue_position > 0 ? `#${h.queue_position}` : 'Ready for Pickup'),
@@ -82,114 +116,109 @@ export default function LibraryPortal() {
 
       // Fetch admin data if SuperAdmin/Admin
       if (isSuperAdmin) {
-         const [circRes, resRes, holdsRes, finesRes] = await Promise.all([
-           api.get('/library/circulation'),
-           api.get('/library/reserves'),
-           api.get('/library/holds'),
-           api.get('/library/fines')
-         ]);
+        const [circRes, resRes, holdsRes, finesRes] = await Promise.all([
+          api.get('/library/circulation', { params: { status: circulationScope } }),
+          api.get('/library/reserves'),
+          api.get('/library/holds'),
+          api.get('/library/fines')
+        ]);
 
-         setCirculation(circRes.data.map(t => ({
-           id: t.transaction_id,
-           title: t.book_copy?.book?.book_title,
-           copyId: t.book_copy?.copy_id,
-           barcode: t.book_copy?.barcode,
-           author: t.book_copy?.book?.author,
-           borrower: t.user?.username,
-           borrowerId: t.user?.user_id,
-           overdueDate: t.due_date
-         })));
+        setCirculation(circRes.data.map(t => ({
+          id: t.transaction_id,
+          title: t.book_copy?.book?.book_title,
+          copyId: t.book_copy?.copy_id,
+          author: t.book_copy?.book?.author,
+          borrower: t.user?.username,
+          borrowerId: t.user?.user_id,
+          overdueDate: t.due_date,
+          status: t.status,
+          isOverdue: t.is_overdue,
+          daysOverdue: t.days_overdue,
+          estimatedFine: t.estimated_fine,
+          returnedAt: t.actual_return_date
+        })));
 
-         setReserves(resRes.data.map(r => ({
-           id: r.reserve_id,
-           course: r.section?.name || 'N/A',
-           status: r.status,
-           title: r.book?.book_title || 'N/A',
-           type: r.target_group || 'Course Reserve',
-           requester: r.user?.username || 'Unknown',
-           role: r.user?.role || 'Teacher',
-           date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A',
-           note: r.teacher_to_admin_note || r.teacher_to_student_note || 'No notes provided.'
-         })));
+        setReserves(resRes.data.map(r => ({
+          id: r.reserve_id,
+          course: r.section?.name || 'N/A',
+          status: r.status,
+          title: r.book?.book_title || 'N/A',
+          type: r.target_group || 'Course Reserve',
+          requester: r.user?.username || 'Unknown',
+          role: r.user?.role || 'Teacher',
+          date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A',
+          note: r.teacher_to_admin_note || r.teacher_to_student_note || 'No notes provided.'
+        })));
 
 
-         setHoldRequests(holdsRes.data.map(h => ({
-           id: h.hold_id,
-           pos: h.status === 'pending_approval' ? 'Getting Approval' : `#${h.queue_position}`,
-           status: h.status,
-           bookTitle: h.book?.book_title,
-           requester: h.user?.username,
-           requesterId: h.user_id,
-           copyId: h.copy_id,
-           role: h.user?.role,
-           date: h.created_at
-         })));
+        setHoldRequests(holdsRes.data.map(h => ({
+          id: h.hold_id,
+          pos: h.status === 'pending_approval' ? 'Getting Approval' : `#${h.queue_position}`,
+          status: h.status,
+          bookTitle: h.book?.book_title,
+          requester: h.user?.username,
+          requesterId: h.user_id,
+          copyId: h.copy_id,
+          role: h.user?.role,
+          date: h.created_at
+        })));
 
-         setFines(finesRes.data.map(f => ({
-           id: f.fine_id,
-           refId: f.ref_id,
-           borrowerName: f.user?.username,
-           bookTitle: f.book_title,
-           daysLate: `${f.days_late} Days`,
-           amount: `₱${f.amount}`
-         })));
-      } else if (user?.role === 'Student') {
-         try {
-           const studentSectionsRes = await api.get('/library/sections/me');
-           const myReserves = [];
-           studentSectionsRes.data.forEach(section => {
-              section.reserves?.forEach(r => {
-                 myReserves.push({
-                     id: r.reserve_id,
-                     course: section.name,
-                     status: r.status,
-                     title: r.book?.book_title || 'N/A',
-                     type: r.target_group || 'Course Reserve',
-                     requester: section.teacher?.username || 'Teacher',
-                     role: 'Teacher',
-                     date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A',
-                     note: r.teacher_to_student_note || 'No notes provided.'
-                 });
+        setFinesData(finesRes.data || { debtors: [], total_outstanding: 0, daily_rate: 10 });
+      } else if (!isFaculty) {
+        try {
+          const studentSectionsRes = await api.get('/library/sections/me');
+          const myReserves = [];
+          studentSectionsRes.data.forEach(section => {
+            section.reserves?.forEach(r => {
+              myReserves.push({
+                id: r.reserve_id,
+                course: section.name,
+                status: r.status,
+                title: r.book?.book_title || 'N/A',
+                type: r.target_group || 'Course Reserve',
+                requester: section.teacher?.username || 'Teacher',
+                role: 'Teacher',
+                date: r.created_at ? new Date(r.created_at).toLocaleDateString() : 'N/A',
+                note: r.teacher_to_student_note || 'No notes provided.'
               });
-           });
-           setReserves(myReserves);
-         } catch (e) {
-           console.error("Failed to fetch student sections/reserves", e);
-         }
+            });
+          });
+          setReserves(myReserves);
+        } catch (e) {
+          console.error("Failed to fetch student sections/reserves", e);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch data", err);
+      setLoadError(
+        err.response?.data?.message ||
+        'Could not load the library. Check your connection and try again.'
+      );
     } finally {
       setLoading(false);
     }
-  }, [isSuperAdmin]);
+  }, [isSuperAdmin, isFaculty, page, debouncedSearch, selectedCategory, circulationScope]);
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
 
-  // Filtered books logic
-  const filteredBooks = useMemo(() => {
-    return books.filter(book => {
-      const q = searchQuery.toLowerCase();
-      const matchesSearch =
-        book.title.toLowerCase().includes(q) ||
-        book.author.toLowerCase().includes(q) ||
-        book.isbn.toLowerCase().includes(q) ||
-        book.location.toLowerCase().includes(q);
+  // Debounce the catalog search so each keystroke does not hit the API.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+      setPage(1);
+    }, 350);
 
-      if (!matchesSearch) return false;
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
-      if (selectedCategory === 'All') return true;
-      if (selectedCategory === 'IT & Computer Science') {
-        return book.categories.some(c => ['COMPUTER SCIENCE', 'WEB ENGINEERING', 'PROGRAMMING', 'DATABASES'].includes(c));
-      }
-      if (selectedCategory === 'General Education') {
-        return book.categories.some(c => c === 'GENERAL EDUCATION' || c === 'COURSE RESERVE');
-      }
-      return book.categories.some(c => c.toUpperCase() === selectedCategory.toUpperCase());
-    });
-  }, [books, searchQuery, selectedCategory]);
+  // Changing the category filter restarts paging.
+  useEffect(() => { setPage(1); }, [selectedCategory]);
+
+  // Search and category filtering are performed by the API, so results cover the
+  // whole catalog rather than only the books already loaded on this page.
+  const filteredBooks = books;
 
   const [holdSearchQuery, setHoldSearchQuery] = useState('');
   const [holdBookFilter, setHoldBookFilter] = useState('');
@@ -198,12 +227,12 @@ export default function LibraryPortal() {
   const filteredHoldRequests = useMemo(() => {
     return holdRequests.filter(req => {
       const q = holdSearchQuery.toLowerCase();
-      const matchQuery = !holdSearchQuery || 
+      const matchQuery = !holdSearchQuery ||
         req.bookTitle?.toLowerCase().includes(q) ||
         req.requester?.toLowerCase().includes(q) ||
         req.pos?.toString().toLowerCase().includes(q) ||
         req.requesterId?.toString().toLowerCase().includes(q);
-      
+
       const matchBook = !holdBookFilter || req.bookTitle === holdBookFilter;
       const matchStatus = !holdStatusFilter || req.status === holdStatusFilter;
 
@@ -277,14 +306,18 @@ export default function LibraryPortal() {
     }
   };
 
-  const handleClearFine = async (fineId) => {
+  const handleRenew = async (transactionId) => {
+    if (!window.confirm('Renew this loan and extend the due date?')) return;
+
     try {
-      await api.post('/library/fines/clear', { fine_id: fineId });
-      alert("Fine cleared successfully!");
+      const res = await api.post('/library/loans/renew', { transaction_id: transactionId });
+      const due = res.data?.transaction?.due_date;
+      alert(due ? `Renewed. New due date: ${new Date(due).toLocaleDateString()}` : 'Renewed successfully.');
+      setSelectedLoan(null);
       fetchData();
     } catch (err) {
       console.error(err);
-      alert(`Failed to clear fine: ${err.response?.data?.message || err.message}`);
+      alert(`Renewal failed: ${err.response?.data?.error || err.response?.data?.message || err.message}`);
     }
   };
 
@@ -326,23 +359,23 @@ export default function LibraryPortal() {
         category: newBook.category,
         copies: parseInt(newBook.copies, 10) || 1
       };
-      
+
       const res = await api.post('/library/books', payload);
-      
+
       const b = res.data.book || res.data;
       const formatted = {
-          id: b.book_id,
-          title: b.book_title,
-          author: b.author,
-          isbn: b.isbn,
-          location: b.physical_location,
-          categories: b.category ? [b.category] : [],
-          available: b.available_copies_count ?? parseInt(newBook.copies, 10),
-          total: b.total_copies ?? parseInt(newBook.copies, 10),
-          image: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=300&h=300"
+        id: b.book_id,
+        title: b.book_title,
+        author: b.author,
+        isbn: b.isbn,
+        location: b.physical_location,
+        categories: b.category ? [b.category] : [],
+        available: b.available_copies_count ?? parseInt(newBook.copies, 10),
+        total: b.total_copies ?? parseInt(newBook.copies, 10),
+        image: "https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?auto=format&fit=crop&q=80&w=300&h=300"
       };
       setBooks([formatted, ...books]);
-      
+
       setNewBook({
         title: '',
         author: '',
@@ -361,41 +394,44 @@ export default function LibraryPortal() {
     }
   };
 
-  const categoriesList = [
-    'All',
-    'IT & Computer Science',
-    'Mathematics & Sciences',
-    'General Education',
-    'Literature & Arts',
-    'Research & Journals'
-  ];
+  // Categories come from the catalog itself, so a chip always matches real data.
+  const categoriesList = useMemo(() => ['All', ...categories], [categories]);
 
   const filteredCirculation = useMemo(() => {
     return circulation.filter(item => {
       const q = circulationSearch.toLowerCase();
+      if (!q) return true;
       return (
         item.copyId?.toString().includes(q) ||
         item.borrowerId?.toString().includes(q) ||
         item.borrower?.toLowerCase().includes(q) ||
-        item.title?.toLowerCase().includes(q) ||
-        item.barcode?.toLowerCase().includes(q)
+        item.title?.toLowerCase().includes(q)
       );
     });
   }, [circulation, circulationSearch]);
 
-  const filteredFines = useMemo(() => {
-    return fines.filter(item => {
-      const q = finesSearch.toLowerCase();
-      return (
-        item.refId?.toString().includes(q) ||
-        item.borrowerName?.toLowerCase().includes(q) ||
-        item.bookTitle?.toLowerCase().includes(q)
-      );
-    });
-  }, [fines, finesSearch]);
+  // Borrower-facing counters, sourced from the API rather than hardcoded.
+  const activeLoanCount = summary?.active_loans ?? myLoans.length;
+  const borrowLimit = summary?.borrow_limit ?? null;
+  const myBalance = summary?.total_fines ?? 0;
+  const overdueCount = summary?.overdue_loans ?? 0;
+  const dailyRate = finesData?.daily_rate ?? 10;
 
   return (
     <div className="w-full font-sans text-slate-800 pb-20">
+
+      {/* A failed load must be visible, not silently shown as an empty library. */}
+      {loadError && (
+        <div className="mx-4 lg:mx-0 mb-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-[12px] font-bold text-rose-800">{loadError}</p>
+          <button
+            onClick={fetchData}
+            className="bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-extrabold py-1.5 px-4 rounded-lg cursor-pointer"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* 📱 MOBILE VIEW (< lg): Retains Exact Original Mobile Layout               */}
@@ -426,21 +462,21 @@ export default function LibraryPortal() {
               <h3 className="text-[10px] font-bold text-gray-400 tracking-wider uppercase mb-1">Your Borrowing Rule</h3>
               {/* Neutral background - NO yellow background */}
               <span className="inline-block bg-slate-100 text-slate-800 border border-slate-200 text-[11px] font-extrabold px-2.5 py-0.5 rounded uppercase">
-                {user?.role === 'Teacher' ? 'FACULTY' : user?.role === 'Student' ? 'STUDENT' : 'ADMIN'}
+                {summary?.role === 'faculty' ? 'FACULTY' : summary?.role === 'administrator' ? 'LIBRARIAN' : 'STUDENT'}
               </span>
             </div>
 
             <div className="mb-4">
               <h3 className="text-[10px] font-bold text-gray-400 tracking-wider uppercase mb-1">Loan Privilege Limit</h3>
               <p className="font-extrabold text-[#0f172a] text-[15px]">
-                {user?.role === 'Teacher' ? 'Max 10 Books (30-Day Loan)' : user?.role === 'Student' ? 'Max 3 Books (7-Day Loan)' : 'Max 20 Books (60-Day Loan)'}
+                {borrowLimit ? `Max ${borrowLimit} Books` : 'No borrowing limit'} ({summary?.role === 'faculty' ? '14' : summary?.role === 'administrator' ? '30' : '7'}-Day Loan)
               </p>
             </div>
 
             <div>
               <h3 className="text-[10px] font-bold text-gray-400 tracking-wider uppercase mb-1">Overdue Late Fine</h3>
               <p className="font-extrabold text-[#0f172a] text-[15px]">
-                {user?.role === 'Teacher' ? 'Exempt (Faculty/Admin)' : user?.role === 'Student' ? '₱10.00 / Day' : 'Exempt (Faculty/Admin)'}
+                {peso(dailyRate)} / Day
               </p>
             </div>
           </div>
@@ -497,7 +533,7 @@ export default function LibraryPortal() {
                 </div>
                 <div>
                   <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Checked Out</div>
-                  <div className="text-xl font-extrabold text-orange-500">2</div>
+                  <div className="text-xl font-extrabold text-orange-500">{books.reduce((n, b) => n + Math.max(0, (b.total || 0) - (b.available || 0)), 0)}</div>
                 </div>
               </div>
 
@@ -511,7 +547,7 @@ export default function LibraryPortal() {
                   </div>
                   <div>
                     <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Overdue Copies</div>
-                    <div className="text-xl font-extrabold text-red-600">2</div>
+                    <div className="text-xl font-extrabold text-red-600">{circulation.filter(c => c.isOverdue).length}</div>
                   </div>
                 </div>
               )}
@@ -524,7 +560,7 @@ export default function LibraryPortal() {
                   </div>
                   <div>
                     <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Total System Fines</div>
-                    <div className="text-xl font-extrabold text-[#8B1A24]">₱150.00</div>
+                    <div className="text-xl font-extrabold text-[#8B1A24]">{peso(finesData.total_outstanding)}</div>
                   </div>
                 </div>
               )}
@@ -539,8 +575,8 @@ export default function LibraryPortal() {
             <button
               onClick={() => setActiveTab('catalog')}
               className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'catalog'
-                  ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
-                  : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
+                ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
+                : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
                 }`}
             >
               <div className="flex items-center gap-1.5 mb-2">
@@ -557,15 +593,15 @@ export default function LibraryPortal() {
             <button
               onClick={() => setActiveTab('borrowing')}
               className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'borrowing'
-                  ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
-                  : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
+                ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
+                : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
                 }`}
             >
               <div className="flex items-center gap-1.5 mb-2">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-[18px] h-[18px] ${activeTab === 'borrowing' ? 'text-white' : 'text-orange-400'}`}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
                 </svg>
-                <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full ${activeTab === 'borrowing' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>0</span>
+                <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full ${activeTab === 'borrowing' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>{activeLoanCount}</span>
               </div>
               <span className="text-[12px] font-extrabold text-center leading-tight">My<br />Borrowing</span>
             </button>
@@ -573,15 +609,15 @@ export default function LibraryPortal() {
             <button
               onClick={() => setActiveTab('reserves')}
               className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'reserves'
-                  ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
-                  : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
+                ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
+                : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
                 }`}
             >
               <div className="flex items-center gap-1.5 mb-2">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-[18px] h-[18px] ${activeTab === 'reserves' ? 'text-white' : 'text-blue-400'}`}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25L2.25 7.5l9.75 5.25L21.75 7.5 12 2.25zM2.25 12l9.75 5.25L21.75 12M2.25 16.5l9.75 5.25L21.75 16.5" />
                 </svg>
-                <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full ${activeTab === 'reserves' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>2</span>
+                <span className={`text-[10px] font-bold w-4 h-4 flex items-center justify-center rounded-full ${activeTab === 'reserves' ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-700'}`}>{reserves.length}</span>
               </div>
               <span className="text-[12px] font-extrabold text-center leading-tight">Course<br />Reserves</span>
             </button>
@@ -596,8 +632,8 @@ export default function LibraryPortal() {
                 <button
                   onClick={() => setActiveTab('circulation')}
                   className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'circulation'
-                      ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
-                      : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
+                    ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
+                    : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
                     }`}
                 >
                   <div className="flex items-center gap-1.5 mb-2">
@@ -612,8 +648,8 @@ export default function LibraryPortal() {
                 <button
                   onClick={() => setActiveTab('fines')}
                   className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'fines'
-                      ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
-                      : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
+                    ? 'bg-[#1e293b] text-white shadow-md scale-[1.02]'
+                    : 'bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100'
                     }`}
                 >
                   <div className="flex items-center gap-1.5 mb-2">
@@ -628,7 +664,7 @@ export default function LibraryPortal() {
                 {/* Add Title Button (Positioned beside Circulation Desk & Admin Fines, NO yellow background) */}
                 <button
                   type="button"
-                  onClick={() => setShowAddBookModal(true)}
+                  onClick={() => setActiveTab('add_title')}
                   className="flex-1 flex flex-col items-center justify-center py-3.5 px-1 rounded-[1.25rem] transition-all duration-200 cursor-pointer bg-transparent text-[#1e293b] hover:bg-gray-50 border border-gray-100"
                 >
                   <div className="flex items-center gap-1.5 mb-2">
@@ -684,8 +720,8 @@ export default function LibraryPortal() {
                         key={cat}
                         onClick={() => setSelectedCategory(cat)}
                         className={`text-[10px] font-extrabold px-3 py-1.5 rounded-full cursor-pointer transition-colors ${selectedCategory === cat
-                            ? 'bg-[#8B1A24] text-white shadow-xs'
-                            : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          ? 'bg-[#8B1A24] text-white shadow-xs'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                           }`}
                       >
                         {cat}
@@ -728,50 +764,50 @@ export default function LibraryPortal() {
                   </div>
                 ) : (
                   filteredBooks.map(book => (
-                  <div key={book.id} className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-gray-100 flex flex-col gap-4">
-                    <div className="flex gap-4">
-                      <div className="w-[88px] h-[104px] shrink-0 rounded-xl overflow-hidden shadow-sm border border-gray-100 bg-gray-100">
-                        <img src={book.image} alt={book.title} className="w-full h-full object-cover" />
-                      </div>
-                      <div className="flex flex-col flex-1 min-w-0">
-                        <div className="flex flex-wrap gap-1.5 mb-2">
-                          {book.categories.map((cat, i) => (
-                            <span key={i} className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded ${cat === 'COURSE RESERVE' ? 'bg-amber-100 text-amber-800' : 'bg-blue-50 text-blue-700'}`}>
-                              {cat}
-                            </span>
-                          ))}
+                    <div key={book.id} className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-gray-100 flex flex-col gap-4">
+                      <div className="flex gap-4">
+                        <div className="w-[88px] h-[104px] shrink-0 rounded-xl overflow-hidden shadow-sm border border-gray-100 bg-gray-100">
+                          <img src={book.image} alt={book.title} className="w-full h-full object-cover" />
                         </div>
-                        <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">{book.title}</h3>
-                        <p className="text-[11px] text-gray-500 font-medium mb-1 truncate">by {book.author}</p>
-                        <p className="text-[10px] text-gray-400 font-medium mb-2 truncate">ISBN: {book.isbn}</p>
-                        <div className="flex items-start gap-1 text-gray-500 mt-auto">
-                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3 shrink-0 mt-0.5 text-[#8B1A24]">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
-                          </svg>
-                          <span className="text-[10px] font-bold leading-tight text-[#1e293b]">{book.location}</span>
+                        <div className="flex flex-col flex-1 min-w-0">
+                          <div className="flex flex-wrap gap-1.5 mb-2">
+                            {book.categories.map((cat, i) => (
+                              <span key={i} className={`text-[8px] font-extrabold uppercase px-1.5 py-0.5 rounded ${cat === 'COURSE RESERVE' ? 'bg-amber-100 text-amber-800' : 'bg-blue-50 text-blue-700'}`}>
+                                {cat}
+                              </span>
+                            ))}
+                          </div>
+                          <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">{book.title}</h3>
+                          <p className="text-[11px] text-gray-500 font-medium mb-1 truncate">by {book.author}</p>
+                          <p className="text-[10px] text-gray-400 font-medium mb-2 truncate">ISBN: {book.isbn}</p>
+                          <div className="flex items-start gap-1 text-gray-500 mt-auto">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3 shrink-0 mt-0.5 text-[#8B1A24]">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 11-6 0 3 3 0 016 0z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1115 0z" />
+                            </svg>
+                            <span className="text-[10px] font-bold leading-tight text-[#1e293b]">{book.location}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-                      <div className="bg-green-50 text-green-700 border border-green-100 px-2.5 py-1 rounded-full flex items-center gap-1.5">
-                        <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                        <span className="text-[10px] font-extrabold">{book.available} of {book.total} Copies Available</span>
+                      <div className="flex items-center justify-between border-t border-gray-100 pt-3">
+                        <div className="bg-green-50 text-green-700 border border-green-100 px-2.5 py-1 rounded-full flex items-center gap-1.5">
+                          <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
+                          <span className="text-[10px] font-extrabold">{book.available} of {book.total} Copies Available</span>
+                        </div>
+                        <button
+                          onClick={() => setSelectedBook(book)}
+                          className="bg-[#1e293b] text-white text-[11px] font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-[#0f172a] transition-colors cursor-pointer"
+                        >
+                          View Copies
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                          </svg>
+                        </button>
                       </div>
-                      <button
-                        onClick={() => setSelectedBook(book)}
-                        className="bg-[#1e293b] text-white text-[11px] font-extrabold px-3 py-1.5 rounded-full flex items-center gap-1 hover:bg-[#0f172a] transition-colors cursor-pointer"
-                      >
-                        View Copies
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={3} stroke="currentColor" className="w-3 h-3">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
-                        </svg>
-                      </button>
                     </div>
-                  </div>
-                ))
-               )}
+                  ))
+                )}
               </div>
             </>
           )}
@@ -783,14 +819,19 @@ export default function LibraryPortal() {
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-5 h-5 text-[#8B1A24]">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
                   </svg>
-                  <h2 className="text-[17px] font-extrabold text-[#0f172a] leading-tight">Your Active Book Loans (0)</h2>
+                  <h2 className="text-[17px] font-extrabold text-[#0f172a] leading-tight">Your Active Book Loans ({activeLoanCount})</h2>
                 </div>
                 <p className="text-gray-500 text-[11px] leading-relaxed mb-4 font-medium">
                   Books currently checked out under your student profile ({user?.username || '2012-00000-SYS'}).
                 </p>
                 <div className="inline-block bg-gray-100 text-[#0f172a] text-[10px] font-extrabold px-3 py-1.5 rounded-lg mb-5">
-                  Max Allowed: 0 / {user?.role === 'Teacher' ? '10' : user?.role === 'Student' ? '3' : '20'} Books
+                  Max Allowed: {activeLoanCount} / {borrowLimit ?? '∞'} Books
                 </div>
+                {overdueCount > 0 && (
+                  <div className="self-start sm:self-auto bg-rose-600 text-white text-[10px] font-extrabold px-3 py-1.5 rounded-lg shrink-0">
+                    {overdueCount} Overdue
+                  </div>
+                )}
 
                 {myLoans.length === 0 ? (
                   <div className="border border-gray-100 rounded-[1.25rem] p-6 flex flex-col items-center justify-center bg-gray-50/30">
@@ -805,9 +846,9 @@ export default function LibraryPortal() {
                 ) : (
                   <div className="flex flex-col gap-3">
                     {myLoans.map(loan => (
-                      <div 
-                        key={loan.transaction_id} 
-                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 text-left shadow-xs cursor-pointer hover:border-emerald-300 transition-colors" 
+                      <div
+                        key={loan.transaction_id}
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 text-left shadow-xs cursor-pointer hover:border-emerald-300 transition-colors"
                         onClick={() => {
                           const foundBook = books.find(b => b.id === loan.book_copy?.book_id);
                           if (foundBook) setSelectedBook(foundBook);
@@ -820,9 +861,14 @@ export default function LibraryPortal() {
                           Barcode: <span className="font-extrabold text-[#0f172a]">{loan.book_copy?.barcode || `CPY-${loan.book_copy?.copy_id}`}</span>
                         </p>
                         <div className="flex items-center justify-between mt-3 pt-3 border-t border-emerald-100/50">
-                          <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                          <span className={`text-[10px] font-extrabold uppercase tracking-wider `}>
                             Due: {new Date(loan.due_date).toLocaleDateString()}
                           </span>
+                          {loan.is_overdue && (
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-rose-600 text-white">
+                              Overdue {loan.days_overdue}d
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -846,10 +892,10 @@ export default function LibraryPortal() {
                 <div className="border border-gray-100 rounded-[1.25rem] p-5 text-left bg-white mb-3 shadow-sm">
                   <div className="flex justify-between items-center mb-3">
                     <span className="text-[12px] font-extrabold text-gray-500">Unpaid Library Fines Balance:</span>
-                    <span className="text-[18px] font-extrabold text-[#8B1A24]">₱0.00</span>
+                    <span className="text-[18px] font-extrabold text-[#8B1A24]">{peso(myBalance)}</span>
                   </div>
                   <p className="text-gray-500 text-[10px] font-medium leading-relaxed">
-                    Calculated @ ₱10.00 / overdue calendar day per unreturned title. Fines must be cleared for graduation & semestral clearance.
+                    Calculated at {peso(dailyRate)} per overdue calendar day. Fines are charged when the librarian checks the book in, and must be cleared before borrowing again.
                   </p>
                 </div>
 
@@ -891,6 +937,54 @@ export default function LibraryPortal() {
                     Books held under "Ready for Pickup" are reserved at the Circulation Desk for 48 hours before proceeding to the next student in queue.
                   </p>
                 </div>
+              </div>
+
+              {/* Borrowing history — card list rather than the desktop table, which
+                  would overflow at phone widths. Same data, same ownership scoping. */}
+              <div className="bg-white rounded-[2rem] p-5 shadow-sm border border-gray-100">
+                <div className="flex items-center justify-between gap-2 mb-3">
+                  <h3 className="font-extrabold text-[#0f172a] text-[13px] leading-tight">Your Borrowing History</h3>
+                  <span className="bg-gray-100 text-gray-700 text-[10px] font-extrabold px-2.5 py-1 rounded-lg shrink-0">
+                    {myHistory.length}
+                  </span>
+                </div>
+                <div className="w-full border-t border-gray-100 mb-3"></div>
+
+                {myHistory.length === 0 ? (
+                  <p className="text-[11px] text-gray-500 italic text-center py-4">
+                    You have not borrowed anything yet.
+                  </p>
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    {myHistory.map(t => (
+                      <div key={t.transaction_id} className="border border-gray-200 rounded-[1.25rem] p-3.5 bg-white shadow-sm">
+                        <div className="flex items-start justify-between gap-2 mb-1">
+                          <h4 className="font-extrabold text-[12px] text-[#0f172a] leading-tight flex-1">
+                            {t.book_copy?.book?.book_title || '—'}
+                          </h4>
+                          {t.status === 'active' && t.is_overdue ? (
+                            <span className="text-[8.5px] font-black uppercase px-2 py-0.5 rounded bg-rose-600 text-white shrink-0">
+                              Overdue {t.days_overdue}d
+                            </span>
+                          ) : t.status === 'active' ? (
+                            <span className="text-[8.5px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-700 shrink-0">
+                              On Loan
+                            </span>
+                          ) : (
+                            <span className="text-[8.5px] font-black uppercase px-2 py-0.5 rounded bg-gray-100 text-gray-600 shrink-0">
+                              Returned
+                            </span>
+                          )}
+                        </div>
+                        <p className="text-[10px] text-gray-500 font-medium">
+                          Borrowed {t.date_borrowed ? new Date(t.date_borrowed).toLocaleDateString() : '—'}
+                          {' · '}Due {t.due_date ? new Date(t.due_date).toLocaleDateString() : '—'}
+                          {t.actual_return_date ? ` · Returned ${new Date(t.actual_return_date).toLocaleDateString()}` : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -991,19 +1085,19 @@ export default function LibraryPortal() {
                   handleCheckout(e, checkoutData.userId, checkoutData.copyId);
                   setCheckoutData({ userId: '', copyId: '' });
                 }}>
-                  <input 
-                    type="text" 
-                    placeholder="Borrower User ID" 
-                    value={checkoutData.userId} 
-                    onChange={(e) => setCheckoutData({...checkoutData, userId: e.target.value})} 
+                  <input
+                    type="text"
+                    placeholder="Borrower User ID"
+                    value={checkoutData.userId}
+                    onChange={(e) => setCheckoutData({ ...checkoutData, userId: e.target.value })}
                     className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[12px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
                     required
                   />
-                  <input 
-                    type="text" 
-                    placeholder="Book Copy ID" 
-                    value={checkoutData.copyId} 
-                    onChange={(e) => setCheckoutData({...checkoutData, copyId: e.target.value})} 
+                  <input
+                    type="text"
+                    placeholder="Book Copy ID"
+                    value={checkoutData.copyId}
+                    onChange={(e) => setCheckoutData({ ...checkoutData, copyId: e.target.value })}
                     className="w-full px-3 py-2 bg-white border border-slate-200 rounded-lg text-[12px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
                     required
                   />
@@ -1051,222 +1145,149 @@ export default function LibraryPortal() {
 
           {/* Admin Fines & Queue (Mobile) - Only on SuperAdmin and Admin */}
           {activeTab === 'fines' && isSuperAdmin && (
-            <div className="flex flex-col gap-3 mt-2">
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
-                <div className="flex justify-between items-start mb-5">
-                  <div>
-                    <h2 className="text-[17px] font-extrabold text-[#0f172a] leading-tight mb-1">Hold Request Queue</h2>
-                    <p className="text-gray-500 text-[11px] font-medium leading-relaxed max-w-[200px]">
-                      Reserves queue placement when stock is 0.
-                    </p>
-                  </div>
-                  <div className="border border-slate-200 bg-slate-50 text-slate-700 px-3 py-1.5 rounded-lg flex flex-col items-center justify-center shrink-0">
-                    <span className="text-[13px] font-extrabold leading-none mb-0.5">2</span>
-                    <span className="text-[10px] font-extrabold leading-none">Requests</span>
-                  </div>
-                </div>
+            <div className="flex flex-col gap-4 mt-2">
+              <HoldQueuePanel
+                requests={filteredHoldRequests}
+                totalRequests={holdRequests.length}
+                bookOptions={[...new Set(holdRequests.map(r => r.bookTitle))]}
+                statusFilter={holdStatusFilter}
+                setStatusFilter={setHoldStatusFilter}
+                bookFilter={holdBookFilter}
+                setBookFilter={setHoldBookFilter}
+                search={holdSearchQuery}
+                setSearch={setHoldSearchQuery}
+                onAccept={handleAcceptHold}
+                onCheckout={handleCheckout}
+                onCancel={handleCancelHold}
+              />
 
-                <div className="flex flex-col gap-3">
-                  {holdRequests.map(request => (
-                    <div key={request.id} className="border border-gray-200 rounded-[1.25rem] p-4 bg-white flex flex-col gap-3 shadow-sm">
-                      <div className="flex gap-3">
-                        <div className="bg-[#8B1A24] text-white rounded-lg w-[42px] h-[42px] flex flex-col items-center justify-center shrink-0">
-                          <span className="text-[9px] font-extrabold uppercase leading-tight">POS</span>
-                          <span className="text-[13px] font-extrabold leading-tight">{request.pos}</span>
-                        </div>
-                        <div>
-                          <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">{request.bookTitle}</h3>
-                          <p className="text-[11px] text-gray-500 font-medium">
-                            Requested by: <span className="font-extrabold text-[#0f172a]">{request.requester}</span> ({request.role}) on {request.date}
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex justify-center mt-1">
-                        <button
-                          onClick={() => handleCancelHold(request.id)}
-                          className="bg-gray-100 text-[#1e293b] text-[11px] font-extrabold px-5 py-2 rounded-xl hover:bg-gray-200 transition-colors cursor-pointer"
-                        >
-                          Cancel Hold
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
-                <h2 className="text-[17px] font-extrabold text-[#0f172a] leading-tight mb-1">Unpaid Library Fines</h2>
-                <p className="text-gray-500 text-[11px] font-medium leading-relaxed mb-4">
-                  Late return fees calculated @ ₱10.00/day for students.
-                </p>
-                <div className="flex justify-center mb-5">
-                  <span className="border border-pink-200 bg-pink-50 text-[#be123c] text-[10px] font-extrabold px-4 py-1.5 rounded-lg tracking-wider">
-                    ₱10.00 / Overdue Day
-                  </span>
-                </div>
-                {fines.length > 0 && (
-                  <div className="flex justify-end mb-4">
-                    <button 
-                      onClick={handleClearFine}
-                      className="bg-[#be123c] text-white text-[11px] font-extrabold py-2 px-4 rounded-xl hover:bg-[#9f1239] transition-colors cursor-pointer shadow-xs"
-                    >
-                      Clear All Fines
-                    </button>
-                  </div>
-                )}
-
-                <div className="flex flex-col gap-3">
-                  <div className="border border-gray-200 rounded-[1.25rem] p-4 bg-white shadow-sm flex flex-col gap-2">
-                    <div className="flex justify-between items-start gap-3">
-                      <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight flex-1">Data Structures and Algorithms in C++</h3>
-                      <span className="font-extrabold text-[#8B1A24] text-[13px] shrink-0">₱100.00</span>
-                    </div>
-                    <p className="text-[11px] text-gray-500 font-medium">
-                      Borrower: <span className="font-extrabold text-[#0f172a]">Maria Santos</span>
-                    </p>
-                    <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
-                      <span className="text-[10px] text-gray-400 font-bold font-mono">Ref #FINE-101</span>
-                      <span className="text-[10px] font-extrabold text-[#8B1A24]">10 Days Overdue</span>
-                    </div>
-                  </div>
-
-                  <div className="border border-gray-200 rounded-[1.25rem] p-4 bg-white shadow-sm flex flex-col gap-2">
-                    <div className="flex justify-between items-start gap-3">
-                      <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight flex-1">Introduction to Operating Systems</h3>
-                      <span className="font-extrabold text-[#8B1A24] text-[13px] shrink-0">₱50.00</span>
-                    </div>
-                    <p className="text-[11px] text-gray-500 font-medium">
-                      Borrower: <span className="font-extrabold text-[#0f172a]">Juan Dela Cruz</span>
-                    </p>
-                    <div className="flex justify-between items-center mt-3 pt-3 border-t border-gray-100">
-                      <span className="text-[10px] text-gray-400 font-bold font-mono">Ref #FINE-102</span>
-                      <span className="text-[10px] font-extrabold text-[#8B1A24]">5 Days Overdue</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
+              <AdminFinesPanel finesData={finesData} onSettled={fetchData} />
             </div>
           )}
 
           {/* Add Title & Physical Copies Tab (Mobile) - Only on SuperAdmin and Admin */}
           {activeTab === 'add_title' && isSuperAdmin && (
-            <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mt-2">
-              <div className="mb-6">
-                {/* Neutral badge - NO yellow background */}
-                <span className="inline-block bg-slate-100 text-slate-800 border border-slate-200 text-[9px] font-extrabold uppercase px-2 py-1 rounded tracking-widest mb-3">
-                  Library Inventory Management
-                </span>
-                <h2 className="text-[20px] font-extrabold text-[#0f172a] leading-tight tracking-tight">Register New Title & Physical Copies</h2>
-              </div>
-
-              <form onSubmit={handleAddBook} className="flex flex-col gap-4">
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Book Title *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newBook.title}
-                    onChange={(e) => setNewBook({ ...newBook, title: e.target.value })}
-                    placeholder="e.g. Operating System Concepts 10th Ed."
-                    className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] placeholder-gray-400 font-medium"
-                  />
+            <>
+              <AdminInventoryPanel books={books} onChanged={fetchData} />
+              <div className="h-4" />
+              <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100 mt-2">
+                <div className="mb-6">
+                  {/* Neutral badge - NO yellow background */}
+                  <span className="inline-block bg-slate-100 text-slate-800 border border-slate-200 text-[9px] font-extrabold uppercase px-2 py-1 rounded tracking-widest mb-3">
+                    Library Inventory Management
+                  </span>
+                  <h2 className="text-[20px] font-extrabold text-[#0f172a] leading-tight tracking-tight">Register New Title & Physical Copies</h2>
                 </div>
 
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Author *</label>
+                <form onSubmit={handleAddBook} className="flex flex-col gap-4">
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Book Title *</label>
                     <input
                       type="text"
                       required
-                      value={newBook.author}
-                      onChange={(e) => setNewBook({ ...newBook, author: e.target.value })}
-                      placeholder="e.g. Abraham Silberschatz"
+                      value={newBook.title}
+                      onChange={(e) => setNewBook({ ...newBook, title: e.target.value })}
+                      placeholder="e.g. Operating System Concepts 10th Ed."
                       className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] placeholder-gray-400 font-medium"
                     />
                   </div>
 
-                  <div className="flex-1">
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">ISBN-13 *</label>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex-1">
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Author *</label>
+                      <input
+                        type="text"
+                        required
+                        value={newBook.author}
+                        onChange={(e) => setNewBook({ ...newBook, author: e.target.value })}
+                        placeholder="e.g. Abraham Silberschatz"
+                        className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] placeholder-gray-400 font-medium"
+                      />
+                    </div>
+
+                    <div className="flex-1">
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">ISBN-13 *</label>
+                      <input
+                        type="text"
+                        required
+                        value={newBook.isbn}
+                        onChange={(e) => setNewBook({ ...newBook, isbn: e.target.value })}
+                        placeholder="e.g. 978-1118063330"
+                        className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] placeholder-gray-400 font-medium"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <div className="flex-1">
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Category</label>
+                      <select
+                        value={newBook.category}
+                        onChange={(e) => setNewBook({ ...newBook, category: e.target.value })}
+                        className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] font-extrabold bg-white cursor-pointer"
+                      >
+                        <option value="IT & Computer Science">IT & Computer Science</option>
+                        <option value="Mathematics & Sciences">Mathematics & Sciences</option>
+                        <option value="General Education">General Education</option>
+                        <option value="Literature & Arts">Literature & Arts</option>
+                        <option value="Research & Journals">Research & Journals</option>
+                      </select>
+                    </div>
+
+                    <div className="flex-1">
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Copy Quantity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        value={newBook.copies}
+                        onChange={(e) => setNewBook({ ...newBook, copies: e.target.value })}
+                        className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] font-extrabold"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Shelf Location</label>
                     <input
                       type="text"
-                      required
-                      value={newBook.isbn}
-                      onChange={(e) => setNewBook({ ...newBook, isbn: e.target.value })}
-                      placeholder="e.g. 978-1118063330"
-                      className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] placeholder-gray-400 font-medium"
+                      value={newBook.location}
+                      onChange={(e) => setNewBook({ ...newBook, location: e.target.value })}
+                      className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] font-medium"
                     />
                   </div>
-                </div>
 
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <div className="flex-1">
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Category</label>
-                    <select
-                      value={newBook.category}
-                      onChange={(e) => setNewBook({ ...newBook, category: e.target.value })}
-                      className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] font-extrabold bg-white cursor-pointer"
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="checkbox"
+                      id="mobileCourseReserveCheck"
+                      checked={newBook.isCourseReserve}
+                      onChange={(e) => setNewBook({ ...newBook, isCourseReserve: e.target.checked })}
+                      className="w-4 h-4 rounded text-[#8B1A24] focus:ring-[#8B1A24] cursor-pointer"
+                    />
+                    <label htmlFor="mobileCourseReserveCheck" className="text-[12px] font-bold text-[#0f172a] cursor-pointer">
+                      Mark as Course Reserve (In-Library Reference Only)
+                    </label>
+                  </div>
+
+                  <div className="flex justify-end gap-3 mt-4 pt-3 border-t border-gray-100">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('catalog')}
+                      className="px-5 py-2.5 border border-gray-200 rounded-xl text-[#0f172a] text-[11px] font-extrabold hover:bg-gray-50 transition-colors cursor-pointer"
                     >
-                      <option value="IT & Computer Science">IT & Computer Science</option>
-                      <option value="Mathematics & Sciences">Mathematics & Sciences</option>
-                      <option value="General Education">General Education</option>
-                      <option value="Literature & Arts">Literature & Arts</option>
-                      <option value="Research & Journals">Research & Journals</option>
-                    </select>
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 bg-[#8B1A24] text-white rounded-xl text-[11px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-sm cursor-pointer"
+                    >
+                      Save Title & Register Copies
+                    </button>
                   </div>
-
-                  <div className="flex-1">
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Copy Quantity</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="50"
-                      value={newBook.copies}
-                      onChange={(e) => setNewBook({ ...newBook, copies: e.target.value })}
-                      className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] font-extrabold"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Shelf Location</label>
-                  <input
-                    type="text"
-                    value={newBook.location}
-                    onChange={(e) => setNewBook({ ...newBook, location: e.target.value })}
-                    className="w-full border border-gray-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#8B1A24]/20 focus:border-[#8B1A24] text-[#0f172a] font-medium"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="checkbox"
-                    id="mobileCourseReserveCheck"
-                    checked={newBook.isCourseReserve}
-                    onChange={(e) => setNewBook({ ...newBook, isCourseReserve: e.target.checked })}
-                    className="w-4 h-4 rounded text-[#8B1A24] focus:ring-[#8B1A24] cursor-pointer"
-                  />
-                  <label htmlFor="mobileCourseReserveCheck" className="text-[12px] font-bold text-[#0f172a] cursor-pointer">
-                    Mark as Course Reserve (In-Library Reference Only)
-                  </label>
-                </div>
-
-                <div className="flex justify-end gap-3 mt-4 pt-3 border-t border-gray-100">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('catalog')}
-                    className="px-5 py-2.5 border border-gray-200 rounded-xl text-[#0f172a] text-[11px] font-extrabold hover:bg-gray-50 transition-colors cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2.5 bg-[#8B1A24] text-white rounded-xl text-[11px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-sm cursor-pointer"
-                  >
-                    Save Title & Register Copies
-                  </button>
-                </div>
-              </form>
-            </div>
+                </form>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -1298,21 +1319,21 @@ export default function LibraryPortal() {
               <h3 className="text-[9.5px] font-extrabold text-slate-400 tracking-wider uppercase mb-1">YOUR BORROWING RULE</h3>
               {/* Neutral pill - NO yellow background */}
               <span className="inline-block bg-slate-100 text-slate-800 border border-slate-200 text-[10.5px] font-extrabold px-2.5 py-0.5 rounded uppercase">
-                {user?.role === 'Teacher' ? 'FACULTY' : user?.role === 'Student' ? 'STUDENT' : 'ADMIN'}
+                {summary?.role === 'faculty' ? 'FACULTY' : summary?.role === 'administrator' ? 'LIBRARIAN' : 'STUDENT'}
               </span>
             </div>
 
             <div className="pt-3 md:pt-0 md:px-5">
               <h3 className="text-[9.5px] font-extrabold text-slate-400 tracking-wider uppercase mb-1">LOAN PRIVILEGE LIMIT</h3>
               <p className="font-extrabold text-[#0f172a] text-[13px]">
-                {user?.role === 'Teacher' ? 'Max 10 Books (30-Day Loan)' : user?.role === 'Student' ? 'Max 3 Books (7-Day Loan)' : 'Max 20 Books (60-Day Loan)'}
+                {borrowLimit ? `Max ${borrowLimit} Books` : 'No borrowing limit'} ({summary?.role === 'faculty' ? '14' : summary?.role === 'administrator' ? '30' : '7'}-Day Loan)
               </p>
             </div>
 
             <div className="pt-3 md:pt-0 md:pl-5">
               <h3 className="text-[9.5px] font-extrabold text-slate-400 tracking-wider uppercase mb-1">OVERDUE LATE FINE</h3>
               <p className="font-extrabold text-[#0f172a] text-[13px]">
-                {user?.role === 'Teacher' ? 'Exempt (Faculty/Admin)' : user?.role === 'Student' ? '₱10.00 / Day' : 'Exempt (Faculty/Admin)'}
+                {peso(dailyRate)} / Day
               </p>
             </div>
           </div>
@@ -1370,7 +1391,7 @@ export default function LibraryPortal() {
                   </div>
                   <div>
                     <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">CHECKED OUT</div>
-                    <div className="text-[22px] font-black text-amber-500 leading-none mt-0.5">2</div>
+                    <div className="text-[22px] font-black text-amber-500 leading-none mt-0.5">{books.reduce((n, b) => n + Math.max(0, (b.total || 0) - (b.available || 0)), 0)}</div>
                   </div>
                 </div>
 
@@ -1384,7 +1405,7 @@ export default function LibraryPortal() {
                     </div>
                     <div>
                       <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">OVERDUE COPIES</div>
-                      <div className="text-[22px] font-black text-rose-600 leading-none mt-0.5">2</div>
+                      <div className="text-[22px] font-black text-rose-600 leading-none mt-0.5">{circulation.filter(c => c.isOverdue).length}</div>
                     </div>
                   </div>
                 )}
@@ -1410,7 +1431,7 @@ export default function LibraryPortal() {
                   </div>
                   <div>
                     <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">TOTAL SYSTEM FINES</div>
-                    <div className="text-[22px] font-black text-[#8B1A24] leading-none mt-0.5">₱150.00</div>
+                    <div className="text-[22px] font-black text-[#8B1A24] leading-none mt-0.5">{peso(finesData.total_outstanding)}</div>
                   </div>
                 </div>
               )}
@@ -1426,8 +1447,8 @@ export default function LibraryPortal() {
             <button
               onClick={() => setActiveTab('catalog')}
               className={`flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl transition-all duration-150 font-extrabold text-[12px] cursor-pointer ${activeTab === 'catalog'
-                  ? 'bg-[#1e293b] text-white shadow-xs'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
+                ? 'bg-[#1e293b] text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
                 }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4">
@@ -1443,15 +1464,15 @@ export default function LibraryPortal() {
             <button
               onClick={() => setActiveTab('borrowing')}
               className={`flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl transition-all duration-150 font-extrabold text-[12px] cursor-pointer ${activeTab === 'borrowing'
-                  ? 'bg-[#1e293b] text-white shadow-xs'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
+                ? 'bg-[#1e293b] text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
                 }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-4 h-4 ${activeTab === 'borrowing' ? 'text-white' : 'text-amber-500'}`}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
               </svg>
               <span className={`text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full ${activeTab === 'borrowing' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                0
+                {activeLoanCount}
               </span>
               <span>My Borrowing</span>
             </button>
@@ -1460,15 +1481,15 @@ export default function LibraryPortal() {
             <button
               onClick={() => setActiveTab('reserves')}
               className={`flex items-center justify-center gap-1.5 py-3 px-4 rounded-xl transition-all duration-150 font-extrabold text-[12px] cursor-pointer ${activeTab === 'reserves'
-                  ? 'bg-[#1e293b] text-white shadow-xs'
-                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
+                ? 'bg-[#1e293b] text-white shadow-xs'
+                : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
                 }`}
             >
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-4 h-4 ${activeTab === 'reserves' ? 'text-white' : 'text-sky-500'}`}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 2.25L2.25 7.5l9.75 5.25L21.75 7.5 12 2.25zM2.25 12l9.75 5.25L21.75 12M2.25 16.5l9.75 5.25L21.75 16.5" />
               </svg>
               <span className={`text-[9px] font-bold w-4 h-4 flex items-center justify-center rounded-full ${activeTab === 'reserves' ? 'bg-slate-700 text-white' : 'bg-slate-100 text-slate-600'}`}>
-                2
+                {reserves.length}
               </span>
               <span>Course Reserves</span>
             </button>
@@ -1481,8 +1502,8 @@ export default function LibraryPortal() {
               <button
                 onClick={() => setActiveTab('circulation')}
                 className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl transition-all duration-150 font-extrabold text-[12px] cursor-pointer ${activeTab === 'circulation'
-                    ? 'bg-[#1e293b] text-white shadow-xs'
-                    : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
+                  ? 'bg-[#1e293b] text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
                   }`}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-4 h-4 ${activeTab === 'circulation' ? 'text-white' : 'text-emerald-500'}`}>
@@ -1495,8 +1516,8 @@ export default function LibraryPortal() {
               <button
                 onClick={() => setActiveTab('fines')}
                 className={`flex items-center justify-center gap-2 py-3 px-4 rounded-xl transition-all duration-150 font-extrabold text-[12px] cursor-pointer ${activeTab === 'fines'
-                    ? 'bg-[#1e293b] text-white shadow-xs'
-                    : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
+                  ? 'bg-[#1e293b] text-white shadow-xs'
+                  : 'bg-white text-slate-700 hover:bg-slate-50 border border-slate-100'
                   }`}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className={`w-4 h-4 ${activeTab === 'fines' ? 'text-white' : 'text-rose-500'}`}>
@@ -1508,7 +1529,7 @@ export default function LibraryPortal() {
               {/* Add Title & Copies */}
               <button
                 type="button"
-                onClick={() => setShowAddBookModal(true)}
+                onClick={() => setActiveTab('add_title')}
                 className="flex items-center justify-center gap-2 py-3 px-4 rounded-xl transition-all duration-150 font-extrabold text-[12px] cursor-pointer active:scale-[0.99] bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-xs"
               >
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor" className="w-4 h-4 text-slate-700">
@@ -1571,8 +1592,8 @@ export default function LibraryPortal() {
                         key={cat}
                         onClick={() => setSelectedCategory(cat)}
                         className={`text-[10px] px-3 py-1 rounded-full transition-all duration-150 cursor-pointer ${selectedCategory === cat
-                            ? 'bg-[#8B1A24] text-white font-black shadow-xs'
-                            : 'bg-[#f1f5f9] text-slate-600 hover:bg-slate-200 font-bold'
+                          ? 'bg-[#8B1A24] text-white font-black shadow-xs'
+                          : 'bg-[#f1f5f9] text-slate-600 hover:bg-slate-200 font-bold'
                           }`}
                       >
                         {cat}
@@ -1640,8 +1661,8 @@ export default function LibraryPortal() {
                               <span
                                 key={i}
                                 className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded tracking-wider ${cat === 'COURSE RESERVE'
-                                    ? 'bg-amber-100 text-amber-800'
-                                    : 'bg-[#e0f2fe] text-[#0284c7]'
+                                  ? 'bg-amber-100 text-amber-800'
+                                  : 'bg-[#e0f2fe] text-[#0284c7]'
                                   }`}
                               >
                                 {cat}
@@ -1693,6 +1714,31 @@ export default function LibraryPortal() {
                   ))}
                 </div>
               )}
+
+              {/* Server-side pagination: the catalog is not limited to one page. */}
+              {pagination.last_page > 1 && (
+                <div className="flex items-center justify-between gap-3 mt-4 bg-white rounded-[1.25rem] px-5 py-3 shadow-xs border border-slate-200/70">
+                  <span className="text-[11.5px] font-semibold text-slate-500">
+                    Page {pagination.current_page} of {pagination.last_page} · {pagination.total} titles
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPage(p => Math.max(1, p - 1))}
+                      disabled={pagination.current_page <= 1}
+                      className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[11.5px] font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Previous
+                    </button>
+                    <button
+                      onClick={() => setPage(p => Math.min(pagination.last_page, p + 1))}
+                      disabled={pagination.current_page >= pagination.last_page}
+                      className="px-3.5 py-1.5 rounded-lg border border-slate-200 text-[11.5px] font-extrabold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
 
@@ -1706,15 +1752,20 @@ export default function LibraryPortal() {
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2.2} stroke="currentColor" className="w-5 h-5 text-[#8B1A24]">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M17.593 3.322c1.1.128 1.907 1.077 1.907 2.185V21L12 17.25 4.5 21V5.507c0-1.108.806-2.057 1.907-2.185a48.507 48.507 0 0111.186 0z" />
                       </svg>
-                      <h2 className="text-[16px] font-extrabold text-[#0f172a]">Your Active Book Loans (0)</h2>
+                      <h2 className="text-[16px] font-extrabold text-[#0f172a]">Your Active Book Loans ({activeLoanCount})</h2>
                     </div>
                     <p className="text-slate-400 text-[11px] font-medium mt-1">
                       Books currently checked out under your student profile ({user?.username || '2012-00000-SYS'}).
                     </p>
                   </div>
                   <div className="self-start sm:self-auto bg-slate-100 text-slate-700 text-[10px] font-extrabold px-3 py-1.5 rounded-lg shrink-0">
-                    Max Allowed: 0 / {user?.role === 'Teacher' ? '10' : user?.role === 'Student' ? '3' : '20'} Books
+                    Max Allowed: {activeLoanCount} / {borrowLimit ?? '∞'} Books
                   </div>
+                  {overdueCount > 0 && (
+                    <div className="self-start sm:self-auto bg-rose-600 text-white text-[10px] font-extrabold px-3 py-1.5 rounded-lg shrink-0">
+                      {overdueCount} Overdue
+                    </div>
+                  )}
                 </div>
 
                 {myLoans.length === 0 ? (
@@ -1730,9 +1781,9 @@ export default function LibraryPortal() {
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                     {myLoans.map(loan => (
-                      <div 
-                        key={loan.transaction_id} 
-                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 shadow-xs cursor-pointer hover:border-emerald-300 transition-colors" 
+                      <div
+                        key={loan.transaction_id}
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 shadow-xs cursor-pointer hover:border-emerald-300 transition-colors"
                         onClick={() => setSelectedLoan(loan)}
                       >
                         <h4 className="font-extrabold text-[#0f172a] text-[13px] mb-1 truncate" title={loan.book_copy?.book?.book_title}>
@@ -1742,9 +1793,14 @@ export default function LibraryPortal() {
                           Barcode: <span className="font-extrabold text-[#0f172a]">{loan.book_copy?.barcode || `CPY-${loan.book_copy?.copy_id}`}</span>
                         </p>
                         <div className="flex items-center justify-between mt-3 pt-3 border-t border-emerald-100/50">
-                          <span className="text-[10px] font-extrabold text-emerald-700 uppercase tracking-wider">
+                          <span className={`text-[10px] font-extrabold uppercase tracking-wider `}>
                             Due: {new Date(loan.due_date).toLocaleDateString()}
                           </span>
+                          {loan.is_overdue && (
+                            <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded bg-rose-600 text-white">
+                              Overdue {loan.days_overdue}d
+                            </span>
+                          )}
                         </div>
                       </div>
                     ))}
@@ -1770,10 +1826,10 @@ export default function LibraryPortal() {
                     <div className="border border-slate-100 rounded-xl p-4 bg-white shadow-2xs mb-3.5">
                       <div className="flex justify-between items-center mb-1.5">
                         <span className="text-[12px] font-extrabold text-slate-600">Unpaid Library Fines Balance:</span>
-                        <span className="text-[17px] font-black text-[#8B1A24]">₱0.00</span>
+                        <span className="text-[17px] font-black text-[#8B1A24]">{peso(myBalance)}</span>
                       </div>
                       <p className="text-slate-400 text-[10.5px] font-medium leading-relaxed">
-                        Calculated @ ₱10.00 / overdue calendar day per unreturned title. Fines must be cleared for graduation & semestral clearance.
+                        Calculated at {peso(dailyRate)} per overdue calendar day. Fines are charged when the librarian checks the book in, and must be cleared before borrowing again.
                       </p>
                     </div>
                   </div>
@@ -1848,6 +1904,74 @@ export default function LibraryPortal() {
                     </p>
                   </div>
                 </div>
+              </div>
+
+              {/* Borrowing history — active and returned loans, scoped to this user. */}
+              <div className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70">
+                <div className="flex items-center justify-between gap-2 mb-4 pb-2 border-b border-slate-100">
+                  <div>
+                    <h2 className="text-[15px] font-extrabold text-[#0f172a]">Your Borrowing History</h2>
+                    <p className="text-slate-400 text-[11px] font-medium mt-0.5">
+                      Every book you have borrowed, including returned copies.
+                    </p>
+                  </div>
+                  <span className="bg-slate-100 text-slate-700 text-[10px] font-extrabold px-3 py-1.5 rounded-lg shrink-0">
+                    {myHistory.length} record{myHistory.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+
+                {myHistory.length === 0 ? (
+                  <p className="text-[11.5px] text-slate-500 italic py-6 text-center">
+                    You have not borrowed anything yet.
+                  </p>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="border-b border-slate-100">
+                          <th className="py-2.5 px-3 text-[10px] font-black text-slate-400 uppercase tracking-wider">Title</th>
+                          <th className="py-2.5 px-3 text-[10px] font-black text-slate-400 uppercase tracking-wider">Borrowed</th>
+                          <th className="py-2.5 px-3 text-[10px] font-black text-slate-400 uppercase tracking-wider">Due</th>
+                          <th className="py-2.5 px-3 text-[10px] font-black text-slate-400 uppercase tracking-wider">Returned</th>
+                          <th className="py-2.5 px-3 text-[10px] font-black text-slate-400 uppercase tracking-wider">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100/70">
+                        {myHistory.map(t => (
+                          <tr key={t.transaction_id} className="hover:bg-slate-50/50">
+                            <td className="py-3 px-3 font-extrabold text-[12px] text-[#0f172a]">
+                              {t.book_copy?.book?.book_title || '—'}
+                            </td>
+                            <td className="py-3 px-3 text-[11.5px] text-slate-600">
+                              {t.date_borrowed ? new Date(t.date_borrowed).toLocaleDateString() : '—'}
+                            </td>
+                            <td className="py-3 px-3 text-[11.5px] text-slate-600">
+                              {t.due_date ? new Date(t.due_date).toLocaleDateString() : '—'}
+                            </td>
+                            <td className="py-3 px-3 text-[11.5px] text-slate-600">
+                              {t.actual_return_date ? new Date(t.actual_return_date).toLocaleDateString() : '—'}
+                            </td>
+                            <td className="py-3 px-3">
+                              {t.status === 'active' && t.is_overdue ? (
+                                <span className="text-[9.5px] font-black uppercase px-2 py-0.5 rounded bg-rose-600 text-white">
+                                  Overdue {t.days_overdue}d
+                                </span>
+                              ) : t.status === 'active' ? (
+                                <span className="text-[9.5px] font-black uppercase px-2 py-0.5 rounded bg-emerald-100 text-emerald-700">
+                                  On Loan
+                                </span>
+                              ) : (
+                                <span className="text-[9.5px] font-black uppercase px-2 py-0.5 rounded bg-slate-100 text-slate-600">
+                                  Returned
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1942,15 +2066,29 @@ export default function LibraryPortal() {
                 </span>
               </div>
 
-              {/* Search Filter for Circulation */}
-              <div className="mb-4">
-                <input 
-                  type="text" 
-                  placeholder="Search by ID, Name, Book, or Barcode..." 
-                  value={circulationSearch} 
-                  onChange={(e) => setCirculationSearch(e.target.value)} 
-                  className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
+              {/* Search + scope: active loans, or the full transaction history. */}
+              <div className="mb-4 flex flex-col sm:flex-row gap-2.5">
+                <input
+                  type="text"
+                  placeholder="Search by borrower ID, name, copy, or title…"
+                  value={circulationSearch}
+                  onChange={(e) => setCirculationSearch(e.target.value)}
+                  className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-emerald-500"
                 />
+                <div className="flex rounded-xl border border-slate-200 overflow-hidden shrink-0">
+                  {[['active', 'Active'], ['all', 'All History'], ['returned', 'Returned']].map(([value, label]) => (
+                    <button
+                      key={value}
+                      onClick={() => setCirculationScope(value)}
+                      className={`px-3.5 py-2.5 text-[11.5px] font-extrabold transition-colors cursor-pointer ${circulationScope === value
+                          ? 'bg-[#1e293b] text-white'
+                          : 'bg-white text-slate-600 hover:bg-slate-50'
+                        }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
               <div className="overflow-x-auto">
@@ -1969,7 +2107,7 @@ export default function LibraryPortal() {
                       <tr key={item.id} className="hover:bg-slate-50/50 transition-colors">
                         <td className="py-3.5 px-3 align-middle">
                           <div className="font-mono text-[12px] font-extrabold text-[#0f172a]">{item.copyId}</div>
-                          <div className="font-mono text-[9.5px] text-slate-400 mt-0.5">{item.barcode}</div>
+                          <div className="font-mono text-[9.5px] text-slate-400 mt-0.5">CPY-{item.copyId}</div>
                         </td>
                         <td className="py-3.5 px-3 align-middle">
                           <div className="font-extrabold text-[12.5px] text-[#0f172a] leading-tight">{item.title}</div>
@@ -2002,341 +2140,155 @@ export default function LibraryPortal() {
 
           {/* Admin Fines & Queue (Desktop) - Only on SuperAdmin and Admin */}
           {activeTab === 'fines' && isSuperAdmin && (
-            <div className="flex flex-col gap-4.5 w-full">
-              {/* 1. Hold Request Queue Card (Full Width) */}
-              <div className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70">
-                <div className="flex items-center justify-between gap-2 mb-4 pb-1">
-                  <div>
-                    <h2 className="text-[18px] font-extrabold text-[#0f172a]">Hold Request Queue</h2>
-                    <p className="text-slate-400 text-[11px] font-medium mt-0.5">
-                      Reserves queue placement when stock is 0.
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <select
-                      value={holdStatusFilter}
-                      onChange={(e) => setHoldStatusFilter(e.target.value)}
-                      className="w-36 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all text-[#0f172a]"
-                    >
-                      <option value="">All Statuses</option>
-                      <option value="pending_approval">Getting Approval</option>
-                      <option value="fulfilled">Ready for Pickup</option>
-                      <option value="pending">Waitlisted</option>
-                    </select>
+            <div className="flex flex-col gap-4 mt-2">
+              <HoldQueuePanel
+                requests={filteredHoldRequests}
+                totalRequests={holdRequests.length}
+                bookOptions={[...new Set(holdRequests.map(r => r.bookTitle))]}
+                statusFilter={holdStatusFilter}
+                setStatusFilter={setHoldStatusFilter}
+                bookFilter={holdBookFilter}
+                setBookFilter={setHoldBookFilter}
+                search={holdSearchQuery}
+                setSearch={setHoldSearchQuery}
+                onAccept={handleAcceptHold}
+                onCheckout={handleCheckout}
+                onCancel={handleCancelHold}
+              />
 
-                    <select
-                      value={holdBookFilter}
-                      onChange={(e) => setHoldBookFilter(e.target.value)}
-                      className="w-40 px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all text-[#0f172a] truncate"
-                    >
-                      <option value="">All Books</option>
-                      {[...new Set(holdRequests.map(r => r.bookTitle))].map((title, i) => (
-                        <option key={i} value={title}>{title}</option>
-                      ))}
-                    </select>
-
-                    <div className="relative">
-                      <input 
-                        type="text" 
-                        placeholder="Search borrower or ID..." 
-                        value={holdSearchQuery}
-                        onChange={(e) => setHoldSearchQuery(e.target.value)}
-                        className="w-48 pl-8 pr-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-[11px] focus:outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400 transition-all text-[#0f172a]"
-                      />
-                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
-                      </svg>
-                    </div>
-                    <span className="border border-amber-300 bg-amber-50/60 text-amber-800 text-[10px] font-extrabold px-3 py-1 rounded-lg">
-                      {holdRequests.length} Requests
-                    </span>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-3">
-                  {filteredHoldRequests.map(request => (
-                    <div key={request.id} className="border border-slate-200/80 rounded-xl p-4 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
-                      <div>
-                        <div className="flex items-center gap-2 mb-0.5">
-                          <span className={`${request.status === 'pending_approval' ? 'bg-orange-500' : request.status === 'fulfilled' ? 'bg-emerald-500' : 'bg-[#8B1A24]'} text-white text-[9px] font-black uppercase px-2 py-0.5 rounded leading-none`}>
-                            {request.status === 'pending_approval' ? 'Getting Approval' : request.status === 'fulfilled' ? 'Ready for Pickup' : `POS ${request.pos}`}
-                          </span>
-                          <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight">
-                            {request.bookTitle}
-                          </h3>
-                        </div>
-                        <p className="text-[11px] text-slate-400 font-medium">
-                          Requested by: <span className="font-extrabold text-[#0f172a]">{request.requester}</span> ({request.role}) on {new Date(request.date).toLocaleDateString()}
-                        </p>
-                      </div>
-
-                      <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
-                        {request.status === 'pending_approval' && (
-                          <button
-                            onClick={() => handleAcceptHold(request.id)}
-                            className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer shadow-xs"
-                          >
-                            Accept
-                          </button>
-                        )}
-                        {request.status === 'fulfilled' && (
-                          <button
-                            onClick={(e) => handleCheckout(e, request.requesterId, request.copyId)}
-                            className="bg-[#8B1A24] hover:bg-[#6b141c] text-white text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer shadow-xs"
-                          >
-                            Check Out
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleCancelHold(request.id)}
-                          className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-4 rounded-xl transition-colors cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Desktop Checkout Form (Option B) */}
-              <div className="bg-white border border-slate-200/70 rounded-[1.25rem] p-6 shadow-xs">
-                <h3 className="font-extrabold text-[15px] text-[#0f172a] mb-4">Check-Out Book Copy (Option B)</h3>
-                <form className="flex flex-col sm:flex-row gap-3" onSubmit={(e) => {
-                  handleCheckout(e, checkoutData.userId, checkoutData.copyId);
-                  setCheckoutData({ userId: '', bookId: '', copyId: '' });
-                }}>
-                  <input 
-                    type="text" 
-                    placeholder="Borrower User ID" 
-                    value={checkoutData.userId} 
-                    onChange={(e) => setCheckoutData({...checkoutData, userId: e.target.value})} 
-                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
-                    required
-                  />
-                  <select 
-                    value={checkoutData.bookId} 
-                    onChange={(e) => setCheckoutData({...checkoutData, bookId: e.target.value, copyId: ''})} 
-                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
-                    required
-                  >
-                    <option value="">-- Select Book --</option>
-                    {books.map(b => (
-                      <option key={b.id} value={b.id}>{b.title}</option>
-                    ))}
-                  </select>
-                  <select 
-                    value={checkoutData.copyId} 
-                    onChange={(e) => setCheckoutData({...checkoutData, copyId: e.target.value})} 
-                    className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
-                    required
-                  >
-                    <option value="">-- Select Barcode/Copy --</option>
-                    {checkoutData.bookId && books.find(b => b.id.toString() === checkoutData.bookId.toString())?.copies.filter(c => c.availability_status === 'available' || c.availability_status === 'on_hold').map(c => (
-                      <option key={c.copy_id} value={c.copy_id}>{c.barcode || `CPY-${c.copy_id}`}</option>
-                    ))}
-                  </select>
-                  <button type="submit" className="bg-[#8B1A24] text-white text-[13px] font-extrabold py-2.5 px-8 rounded-xl hover:bg-[#6b141c] transition-colors cursor-pointer shadow-xs whitespace-nowrap">
-                    Check Out
-                  </button>
-                </form>
-              </div>
-
-              {/* 2. Unpaid Library Fines Card (Full Width Data Table) */}
-              <div className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-2 border-b border-slate-100">
-                  <div>
-                    <h2 className="text-[18px] font-extrabold text-[#0f172a]">Unpaid Library Fines</h2>
-                    <p className="text-slate-400 text-[11px] font-medium mt-0.5">
-                      Late return fees calculated @ ₱10.00/day for students.
-                    </p>
-                  </div>
-                  <span className="self-start sm:self-auto border border-pink-200 bg-pink-50 text-[#be123c] text-[10px] font-extrabold px-3 py-1.5 rounded-lg">
-                    ₱10.00 / Overdue Day
-                  </span>
-                </div>
-
-                {fines.length > 0 && (
-                  <div className="flex flex-col sm:flex-row justify-between items-center gap-3 mb-4">
-                    <input 
-                      type="text" 
-                      placeholder="Search fines by ID, Name, or Book..." 
-                      value={finesSearch} 
-                      onChange={(e) => setFinesSearch(e.target.value)} 
-                      className="w-full sm:w-1/2 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#be123c]"
-                    />
-                    <button 
-                      onClick={handleClearFine}
-                      className="bg-[#be123c] text-white text-[12px] font-extrabold py-2 px-5 rounded-xl hover:bg-[#9f1239] transition-colors cursor-pointer shadow-xs whitespace-nowrap"
-                    >
-                      Clear All Fines
-                    </button>
-                  </div>
-                )}
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-100">
-                        <th className="py-3 px-3 text-[10px] font-black text-slate-400 tracking-wider uppercase">REF ID</th>
-                        <th className="py-3 px-3 text-[10px] font-black text-slate-400 tracking-wider uppercase">BORROWER NAME</th>
-                        <th className="py-3 px-3 text-[10px] font-black text-slate-400 tracking-wider uppercase">BOOK TITLE</th>
-                        <th className="py-3 px-3 text-[10px] font-black text-slate-400 tracking-wider uppercase">DAYS LATE</th>
-                        <th className="py-3 px-3 text-[10px] font-black text-slate-400 tracking-wider uppercase">AMOUNT</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100/70">
-                      {filteredFines.map(fine => (
-                        <tr key={fine.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="py-3.5 px-3 align-middle font-mono text-[11.5px] font-extrabold text-[#0f172a]">
-                            {fine.refId}
-                          </td>
-                          <td className="py-3.5 px-3 align-middle font-extrabold text-[12.5px] text-[#0f172a]">
-                            {fine.borrowerName}
-                          </td>
-                          <td className="py-3.5 px-3 align-middle font-extrabold text-[12.5px] text-[#0f172a]">
-                            {fine.bookTitle}
-                          </td>
-                          <td className="py-3.5 px-3 align-middle font-extrabold text-[11.5px] text-rose-600">
-                            {fine.daysLate}
-                          </td>
-                          <td className="py-3.5 px-3 align-middle font-black text-[12.5px] text-[#0f172a]">
-                            {fine.amount}
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
+              <AdminFinesPanel finesData={finesData} onSettled={fetchData} />
             </div>
           )}
 
           {/* Add Title & Physical Copies Tab (Desktop) - Only on SuperAdmin and Admin */}
           {activeTab === 'add_title' && isSuperAdmin && (
-            <div className="max-w-2xl mx-auto w-full bg-white rounded-[1.25rem] p-6 sm:p-8 shadow-xs border border-slate-200/70">
-              <div className="mb-6 pb-4 border-b border-slate-100 text-center">
-                {/* Neutral badge - NO yellow background */}
-                <span className="inline-block bg-slate-100 text-slate-800 border border-slate-200 text-[9.5px] font-black uppercase px-2.5 py-1 rounded tracking-wider mb-2">
-                  LIBRARY INVENTORY MANAGEMENT
-                </span>
-                <h2 className="text-[20px] font-extrabold text-[#0f172a] leading-tight">
-                  Register New Title & Physical Copies
-                </h2>
-                <p className="text-slate-400 text-[11.5px] font-medium mt-1">
-                  Enter complete book bibliographic details and initial physical copy inventory.
-                </p>
-              </div>
-
-              <form onSubmit={handleAddBook} className="flex flex-col gap-4 w-full">
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Book Title *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newBook.title}
-                    onChange={(e) => setNewBook({ ...newBook, title: e.target.value })}
-                    placeholder="e.g. Operating System Concepts 10th Ed."
-                    className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
-                  />
+            <>
+              <AdminInventoryPanel books={books} onChanged={fetchData} />
+              <div className="h-4" />
+              <div className="max-w-2xl mx-auto w-full bg-white rounded-[1.25rem] p-6 sm:p-8 shadow-xs border border-slate-200/70">
+                <div className="mb-6 pb-4 border-b border-slate-100 text-center">
+                  {/* Neutral badge - NO yellow background */}
+                  <span className="inline-block bg-slate-100 text-slate-800 border border-slate-200 text-[9.5px] font-black uppercase px-2.5 py-1 rounded tracking-wider mb-2">
+                    LIBRARY INVENTORY MANAGEMENT
+                  </span>
+                  <h2 className="text-[20px] font-extrabold text-[#0f172a] leading-tight">
+                    Register New Title & Physical Copies
+                  </h2>
+                  <p className="text-slate-400 text-[11.5px] font-medium mt-1">
+                    Enter complete book bibliographic details and initial physical copy inventory.
+                  </p>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <form onSubmit={handleAddBook} className="flex flex-col gap-4 w-full">
                   <div>
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Author *</label>
+                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Book Title *</label>
                     <input
                       type="text"
                       required
-                      value={newBook.author}
-                      onChange={(e) => setNewBook({ ...newBook, author: e.target.value })}
-                      placeholder="e.g. Abraham Silberschatz"
+                      value={newBook.title}
+                      onChange={(e) => setNewBook({ ...newBook, title: e.target.value })}
+                      placeholder="e.g. Operating System Concepts 10th Ed."
                       className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
                     />
                   </div>
 
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Author *</label>
+                      <input
+                        type="text"
+                        required
+                        value={newBook.author}
+                        onChange={(e) => setNewBook({ ...newBook, author: e.target.value })}
+                        placeholder="e.g. Abraham Silberschatz"
+                        className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">ISBN-13 *</label>
+                      <input
+                        type="text"
+                        required
+                        value={newBook.isbn}
+                        onChange={(e) => setNewBook({ ...newBook, isbn: e.target.value })}
+                        placeholder="e.g. 978-1118063330"
+                        className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Category</label>
+                      <select
+                        value={newBook.category}
+                        onChange={(e) => setNewBook({ ...newBook, category: e.target.value })}
+                        className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-bold bg-[#f8fafc] cursor-pointer"
+                      >
+                        <option value="IT & Computer Science">IT & Computer Science</option>
+                        <option value="Mathematics & Sciences">Mathematics & Sciences</option>
+                        <option value="General Education">General Education</option>
+                        <option value="Literature & Arts">Literature & Arts</option>
+                        <option value="Research & Journals">Research & Journals</option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Copy Quantity</label>
+                      <input
+                        type="number"
+                        min="1"
+                        max="50"
+                        value={newBook.copies}
+                        onChange={(e) => setNewBook({ ...newBook, copies: e.target.value })}
+                        className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-extrabold bg-[#f8fafc]"
+                      />
+                    </div>
+                  </div>
+
                   <div>
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">ISBN-13 *</label>
+                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Shelf Location</label>
                     <input
                       type="text"
-                      required
-                      value={newBook.isbn}
-                      onChange={(e) => setNewBook({ ...newBook, isbn: e.target.value })}
-                      placeholder="e.g. 978-1118063330"
+                      value={newBook.location}
+                      onChange={(e) => setNewBook({ ...newBook, location: e.target.value })}
+                      placeholder="e.g. Floor 2 - Shelf CS-101"
                       className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
                     />
                   </div>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Category</label>
-                    <select
-                      value={newBook.category}
-                      onChange={(e) => setNewBook({ ...newBook, category: e.target.value })}
-                      className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-bold bg-[#f8fafc] cursor-pointer"
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="checkbox"
+                      id="desktopCourseReserveCheck"
+                      checked={newBook.isCourseReserve}
+                      onChange={(e) => setNewBook({ ...newBook, isCourseReserve: e.target.checked })}
+                      className="w-4 h-4 rounded text-[#8B1A24] focus:ring-[#8B1A24] cursor-pointer"
+                    />
+                    <label htmlFor="desktopCourseReserveCheck" className="text-[12px] font-bold text-[#0f172a] cursor-pointer">
+                      Mark as Course Reserve (In-Library Reference Only)
+                    </label>
+                  </div>
+
+                  <div className="flex justify-end gap-3 mt-4 pt-3 border-t border-slate-100">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('catalog')}
+                      className="px-5 py-2 border border-slate-200 rounded-xl text-slate-700 text-[12px] font-extrabold hover:bg-slate-50 cursor-pointer"
                     >
-                      <option value="IT & Computer Science">IT & Computer Science</option>
-                      <option value="Mathematics & Sciences">Mathematics & Sciences</option>
-                      <option value="General Education">General Education</option>
-                      <option value="Literature & Arts">Literature & Arts</option>
-                      <option value="Research & Journals">Research & Journals</option>
-                    </select>
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-5 py-2 bg-[#8B1A24] text-white rounded-xl text-[12px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-xs cursor-pointer"
+                    >
+                      Save Title & Register Copies
+                    </button>
                   </div>
-
-                  <div>
-                    <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Copy Quantity</label>
-                    <input
-                      type="number"
-                      min="1"
-                      max="50"
-                      value={newBook.copies}
-                      onChange={(e) => setNewBook({ ...newBook, copies: e.target.value })}
-                      className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-extrabold bg-[#f8fafc]"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1.5">Shelf Location</label>
-                  <input
-                    type="text"
-                    value={newBook.location}
-                    onChange={(e) => setNewBook({ ...newBook, location: e.target.value })}
-                    placeholder="e.g. Floor 2 - Shelf CS-101"
-                    className="w-full border border-slate-200 rounded-xl py-2.5 px-3 text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
-                  />
-                </div>
-
-                <div className="flex items-center gap-2 mt-1">
-                  <input
-                    type="checkbox"
-                    id="desktopCourseReserveCheck"
-                    checked={newBook.isCourseReserve}
-                    onChange={(e) => setNewBook({ ...newBook, isCourseReserve: e.target.checked })}
-                    className="w-4 h-4 rounded text-[#8B1A24] focus:ring-[#8B1A24] cursor-pointer"
-                  />
-                  <label htmlFor="desktopCourseReserveCheck" className="text-[12px] font-bold text-[#0f172a] cursor-pointer">
-                    Mark as Course Reserve (In-Library Reference Only)
-                  </label>
-                </div>
-
-                <div className="flex justify-end gap-3 mt-4 pt-3 border-t border-slate-100">
-                  <button
-                    type="button"
-                    onClick={() => setActiveTab('catalog')}
-                    className="px-5 py-2 border border-slate-200 rounded-xl text-slate-700 text-[12px] font-extrabold hover:bg-slate-50 cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    type="submit"
-                    className="px-5 py-2 bg-[#8B1A24] text-white rounded-xl text-[12px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-xs cursor-pointer"
-                  >
-                    Save Title & Register Copies
-                  </button>
-                </div>
-              </form>
-            </div>
+                </form>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -2379,10 +2331,10 @@ export default function LibraryPortal() {
                 const isAvailable = copy.availability_status === 'available';
                 const isHeld = copy.availability_status === 'on_hold';
                 const isCheckedOut = copy.availability_status === 'checked_out';
-                
+
                 let statusStyle = 'bg-emerald-50 text-emerald-700 border border-emerald-200';
                 let statusText = 'Available on Shelf';
-                
+
                 if (isHeld) {
                   statusStyle = 'bg-blue-50 text-blue-700 border border-blue-200';
                   statusText = 'Currently on Hold';
@@ -2432,7 +2384,7 @@ export default function LibraryPortal() {
 
       {/* Modal: Active Loan Details */}
       {selectedLoan && (
-        <div 
+        <div
           onClick={(e) => { if (e.target === e.currentTarget) setSelectedLoan(null); }}
           className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
         >
@@ -2447,7 +2399,7 @@ export default function LibraryPortal() {
                 </h2>
                 <p className="text-slate-400 text-[11px] font-medium mt-0.5">by {selectedLoan.book_copy?.book?.author}</p>
               </div>
-              <button 
+              <button
                 onClick={() => setSelectedLoan(null)}
                 className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer transition-colors"
               >
@@ -2465,7 +2417,7 @@ export default function LibraryPortal() {
               <div className="flex justify-between items-center py-2 border-b border-slate-100">
                 <span className="text-[11px] font-extrabold text-slate-500 uppercase">Borrow Date</span>
                 <span className="text-[12px] font-bold text-[#0f172a]">
-                  {new Date(selectedLoan.transaction_date).toLocaleDateString()}
+                  {selectedLoan.date_borrowed ? new Date(selectedLoan.date_borrowed).toLocaleDateString() : '—'}
                 </span>
               </div>
               <div className="flex justify-between items-center py-2 border-b border-slate-100">
@@ -2477,7 +2429,7 @@ export default function LibraryPortal() {
               <div className="flex justify-between items-center py-2 border-b border-slate-100">
                 <span className="text-[11px] font-extrabold text-slate-500 uppercase">Physical Condition</span>
                 <span className="text-[12px] font-bold text-[#0f172a] capitalize">
-                  {selectedLoan.book_copy?.physical_condition || 'new'}
+                  {selectedLoan.book_copy?.condition || '—'}
                 </span>
               </div>
             </div>
@@ -2488,10 +2440,20 @@ export default function LibraryPortal() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                 </svg>
                 <p className="text-[11px] font-medium text-amber-800 leading-relaxed">
-                  <strong>Return Instructions:</strong> Return this book to the Circulation Desk on or before the due date to avoid late fees of ₱10.00/day.
+                  <strong>Return Instructions:</strong> Return this book to the Circulation Desk on or before the due date to avoid late fees of {peso(dailyRate)}/day.
                 </p>
               </div>
             </div>
+
+            {selectedLoan.is_overdue && (
+              <div className="mt-3 p-3.5 bg-rose-50 border border-rose-200 rounded-xl">
+                <p className="text-[11px] font-bold text-rose-800 leading-relaxed">
+                  Overdue by {selectedLoan.days_overdue} day{selectedLoan.days_overdue === 1 ? '' : 's'}.
+                  Estimated fine if returned today: {peso(selectedLoan.estimated_fine)}.
+                  <span className="block font-medium mt-0.5">The fine is charged when the librarian checks the book in.</span>
+                </p>
+              </div>
+            )}
 
             <div className="flex justify-end gap-2.5 mt-5">
               <button
@@ -2500,6 +2462,14 @@ export default function LibraryPortal() {
               >
                 Close
               </button>
+              {selectedLoan.status === 'active' && (
+                <button
+                  onClick={() => handleRenew(selectedLoan.transaction_id)}
+                  className="px-4 py-2 bg-[#8B1A24] hover:bg-[#6b141c] text-white rounded-xl text-xs font-extrabold cursor-pointer shadow-xs"
+                >
+                  Renew Loan
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -2507,7 +2477,7 @@ export default function LibraryPortal() {
 
       {/* Modal: Register New Title & Physical Copies Pop-Up */}
       {showAddBookModal && (
-        <div 
+        <div
           onClick={(e) => { if (e.target === e.currentTarget) setShowAddBookModal(false); }}
           className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-200"
         >
@@ -2521,7 +2491,7 @@ export default function LibraryPortal() {
                   Register New Title & Physical Copies
                 </h2>
               </div>
-              <button 
+              <button
                 type="button"
                 onClick={() => setShowAddBookModal(false)}
                 className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer transition-colors"
@@ -2533,8 +2503,8 @@ export default function LibraryPortal() {
             <form onSubmit={handleAddBook} className="flex flex-col gap-3.5 mt-3">
               <div>
                 <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Book Title *</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   required
                   value={newBook.title}
                   onChange={(e) => setNewBook({ ...newBook, title: e.target.value })}
@@ -2546,8 +2516,8 @@ export default function LibraryPortal() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Author *</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     value={newBook.author}
                     onChange={(e) => setNewBook({ ...newBook, author: e.target.value })}
@@ -2558,8 +2528,8 @@ export default function LibraryPortal() {
 
                 <div>
                   <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">ISBN-13 *</label>
-                  <input 
-                    type="text" 
+                  <input
+                    type="text"
                     required
                     value={newBook.isbn}
                     onChange={(e) => setNewBook({ ...newBook, isbn: e.target.value })}
@@ -2572,7 +2542,7 @@ export default function LibraryPortal() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Category</label>
-                  <select 
+                  <select
                     value={newBook.category}
                     onChange={(e) => setNewBook({ ...newBook, category: e.target.value })}
                     className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-bold bg-[#f8fafc] cursor-pointer"
@@ -2587,9 +2557,9 @@ export default function LibraryPortal() {
 
                 <div>
                   <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Copy Quantity</label>
-                  <input 
-                    type="number" 
-                    min="1" 
+                  <input
+                    type="number"
+                    min="1"
                     max="50"
                     value={newBook.copies}
                     onChange={(e) => setNewBook({ ...newBook, copies: e.target.value })}
@@ -2600,8 +2570,8 @@ export default function LibraryPortal() {
 
               <div>
                 <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Shelf Location</label>
-                <input 
-                  type="text" 
+                <input
+                  type="text"
                   value={newBook.location}
                   onChange={(e) => setNewBook({ ...newBook, location: e.target.value })}
                   placeholder="Floor 2 - Shelf CS-101"
@@ -2610,14 +2580,14 @@ export default function LibraryPortal() {
               </div>
 
               <div className="flex justify-end items-center gap-2.5 pt-3 border-t border-slate-100 mt-1">
-                <button 
+                <button
                   type="button"
                   onClick={() => setShowAddBookModal(false)}
                   className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 text-[11.5px] font-extrabold hover:bg-slate-50 cursor-pointer"
                 >
                   Cancel
                 </button>
-                <button 
+                <button
                   type="submit"
                   className="px-4 py-2 bg-[#8B1A24] text-white rounded-xl text-[11.5px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-xs cursor-pointer"
                 >

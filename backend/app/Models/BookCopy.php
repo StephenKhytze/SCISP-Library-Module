@@ -34,4 +34,15 @@ class BookCopy extends Model
     {
         return $this->belongsTo(CourseReserve::class, 'reserve_id', 'reserve_id');
     }
+
+    /**
+     * The open loan on this copy, if any.
+     * Serialised as `active_transaction`, which the reserves UI already reads.
+     */
+    public function activeTransaction()
+    {
+        return $this->hasOne(Transaction::class, 'copy_id', 'copy_id')
+            ->where('status', 'active')
+            ->with('user');
+    }
 }

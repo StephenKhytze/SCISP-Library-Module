@@ -22,7 +22,7 @@ export default function Layout() {
     <div className="flex flex-col min-h-screen m-0 p-0 overflow-hidden bg-gray-100">
       {/* Topbar spans the full width at the top */}
       <Topbar currentUser={user} onLogout={handleLogout} onSelectUser={handleSelectUser} />
-      
+
       {/* Container for Sidebar and Main Content */}
       <div className="flex flex-1 overflow-hidden">
         <Sidebar />

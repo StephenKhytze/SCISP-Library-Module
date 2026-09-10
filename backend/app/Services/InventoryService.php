@@ -15,6 +15,19 @@ class InventoryService
     {
         $query = Book::query();
 
+        // Single-box search across the fields a borrower would type.
+        // Runs server-side so results are not limited to the current page.
+        if (!empty($filters['search'])) {
+            $term = '%'.$filters['search'].'%';
+
+            $query->where(function ($q) use ($term) {
+                $q->where('book_title', 'like', $term)
+                    ->orWhere('author', 'like', $term)
+                    ->orWhere('isbn', 'like', $term)
+                    ->orWhere('physical_location', 'like', $term);
+            });
+        }
+
         if (!empty($filters['title'])) {
             $query->where('book_title', 'like', '%' . $filters['title'] . '%');
         }
@@ -24,7 +37,8 @@ class InventoryService
         }
 
         if (!empty($filters['category'])) {
-            $query->where('category', 'like', '%' . $filters['category'] . '%');
+            // Exact match so a chip selects precisely that shelf category.
+            $query->where('category', $filters['category']);
         }
 
         if (!empty($filters['isbn'])) {
@@ -38,7 +52,22 @@ class InventoryService
             }
         ]);
 
-        return $query->paginate(15);
+        $perPage = (int) ($filters['per_page'] ?? 15);
+        $perPage = max(1, min($perPage, 100));
+
+        return $query->orderBy('book_title')->paginate($perPage);
+    }
+
+    /** Distinct categories actually present in the catalog, for filter chips. */
+    public function categories(): array
+    {
+        return Book::query()
+            ->whereNotNull('category')
+            ->where('category', '!=', '')
+            ->distinct()
+            ->orderBy('category')
+            ->pluck('category')
+            ->all();
     }
 
     /**
@@ -114,10 +143,24 @@ class InventoryService
     public function updateCopyStatus(int $copyId, array $data): BookCopy
     {
         $copy = BookCopy::findOrFail($copyId);
-        
+
+        $newStatus = $data['availability_status'] ?? $copy->availability_status;
+
+        // A copy that is still on loan must not be hand-flipped back to available;
+        // it returns to circulation through check-in, which also settles any fine.
+        if ($newStatus === 'available' && $copy->availability_status !== 'available') {
+            $hasActiveLoan = \App\Models\Transaction::where('copy_id', $copyId)
+                ->where('status', 'active')
+                ->exists();
+
+            if ($hasActiveLoan) {
+                throw new \Exception('This copy has an active loan. Check it in instead of marking it available.');
+            }
+        }
+
         $copy->update([
             'condition' => $data['condition'] ?? $copy->condition,
-            'availability_status' => $data['availability_status'] ?? $copy->availability_status,
+            'availability_status' => $newStatus,
         ]);
 
         return $copy;
