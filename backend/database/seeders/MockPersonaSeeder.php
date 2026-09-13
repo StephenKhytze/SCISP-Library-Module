@@ -22,17 +22,20 @@ class MockPersonaSeeder extends Seeder
 {
     public function run(): void
     {
+        // Admin and Super Admin both store role = 'administrator'; the
+        // is_super_admin flag is what separates the management-only persona
+        // from the ordinary librarian.
         $personas = [
-            // username              => DB role      (source)
-            'DelaCruz_Juan_C1234'    => 'student',       // Topbar.jsx — Juan Dela Cruz (Student)
-            'Santos_Maria_F12'       => 'faculty',       // Topbar.jsx — Prof. Maria Santos (Teacher)
-            'Admin_User_00001'       => 'administrator', // Topbar.jsx — Admin User (Admin)
-            'SysAdmin_001'           => 'administrator', // Topbar.jsx — System Admin (Super Admin)
-            'guest'                  => 'student',       // App.jsx auto-injected guest
+            // username           => [DB role,        is_super_admin]  (source)
+            'DelaCruz_Juan_C1234' => ['student',       false], // Topbar.jsx — Juan Dela Cruz (Student)
+            'Santos_Maria_F12'    => ['faculty',       false], // Topbar.jsx — Prof. Maria Santos (Teacher)
+            'Admin_User_00001'    => ['administrator', false], // Topbar.jsx — Admin User (Admin)
+            'SysAdmin_001'        => ['administrator', true],  // Topbar.jsx — System Admin (Super Admin)
+            'guest'               => ['student',       false], // App.jsx auto-injected guest
         ];
 
-        foreach ($personas as $username => $role) {
-            User::firstOrCreate(
+        foreach ($personas as $username => [$role, $isSuperAdmin]) {
+            $user = User::firstOrCreate(
                 ['username' => $username],
                 [
                     'role' => $role,
@@ -40,6 +43,12 @@ class MockPersonaSeeder extends Seeder
                     'status' => 'active',
                 ]
             );
+
+            // Not mass-assignable by design, so it is always forced here —
+            // this seeder is trusted code, a request body is not.
+            if ($user->is_super_admin !== $isSuperAdmin) {
+                $user->forceFill(['is_super_admin' => $isSuperAdmin])->save();
+            }
         }
     }
 }

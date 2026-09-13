@@ -43,14 +43,19 @@ function identityAs(string $role, ?string $username = null): array
     return $headers;
 }
 
-function identityUser(string $username, string $dbRole, string $status = 'active'): User
+function identityUser(string $username, string $dbRole, string $status = 'active', bool $isSuperAdmin = false): User
 {
-    return User::create([
+    $user = User::create([
         'username' => $username,
         'password' => 'password',
         'role' => $dbRole,
         'status' => $status,
     ]);
+
+    // Not mass-assignable: forced here because this is trusted test setup.
+    $user->forceFill(['is_super_admin' => $isSuperAdmin])->save();
+
+    return $user;
 }
 
 // A route behind the bare middleware (any authenticated role may reach it).
@@ -63,7 +68,7 @@ beforeEach(function () {
     $this->student = identityUser('DelaCruz_Juan_C1234', 'student');
     $this->teacher = identityUser('Santos_Maria_F12', 'faculty');
     $this->admin = identityUser('Admin_User_00001', 'administrator');
-    $this->superAdmin = identityUser('SysAdmin_001', 'administrator');
+    $this->superAdmin = identityUser('SysAdmin_001', 'administrator', 'active', true);
 });
 
 /*
@@ -213,15 +218,27 @@ test('I16: Student role with a faculty username is rejected with 403', function 
         ->assertStatus(403);
 });
 
-test('I17: Admin and Super Admin both satisfy the administrator stored role', function () {
-    // Both map to 'administrator', so neither is a mismatch.
-    $this->withHeaders(identityAs('Admin', 'SysAdmin_001'))
+test('I17: Admin and Super Admin are no longer interchangeable', function () {
+    // Both still map to the 'administrator' stored role...
+    $this->withHeaders(identityAs('Admin', 'Admin_User_00001'))
         ->getJson(IDENTITY_ADMIN_ROUTE)
         ->assertStatus(200);
 
-    $this->withHeaders(identityAs('Super Admin', 'Admin_User_00001'))
+    $this->withHeaders(identityAs('Super Admin', 'SysAdmin_001'))
         ->getJson(IDENTITY_ADMIN_ROUTE)
         ->assertStatus(200);
+
+    // ...but the persona claimed in the header must match the stored flag.
+    // Without this, a Super Admin could send "Admin" and borrow anyway.
+    $this->withHeaders(identityAs('Admin', 'SysAdmin_001'))
+        ->getJson(IDENTITY_ADMIN_ROUTE)
+        ->assertStatus(403)
+        ->assertJsonPath('message', 'Forbidden. Supplied role does not match the user account.');
+
+    // And an ordinary Admin cannot claim to be a Super Admin.
+    $this->withHeaders(identityAs('Super Admin', 'Admin_User_00001'))
+        ->getJson(IDENTITY_ADMIN_ROUTE)
+        ->assertStatus(403);
 });
 
 /*

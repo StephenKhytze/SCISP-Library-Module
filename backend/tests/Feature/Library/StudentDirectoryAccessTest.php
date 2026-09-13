@@ -24,15 +24,20 @@ function dirAs(string $role, string $username): array
     return ['X-Mock-Role' => $role, 'X-Mock-Username' => $username];
 }
 
-function dirUser(string $username, string $dbRole): User
+function dirUser(string $username, string $dbRole, bool $isSuperAdmin = false): User
 {
-    return User::create([
+    $user = User::create([
         'username' => $username,
         'password' => 'password',
         'role' => $dbRole,
         'status' => 'active',
         'total_fines' => 0,
     ]);
+
+    // Not mass-assignable: forced here because this is trusted test setup.
+    $user->forceFill(['is_super_admin' => $isSuperAdmin])->save();
+
+    return $user;
 }
 
 const DIRECTORY_ROUTE = '/api/library/students';
@@ -41,7 +46,7 @@ beforeEach(function () {
     $this->student = dirUser('dir_student', 'student');
     $this->faculty = dirUser('dir_faculty', 'faculty');
     $this->admin = dirUser('dir_admin', 'administrator');
-    $this->superAdmin = dirUser('dir_superadmin', 'administrator');
+    $this->superAdmin = dirUser('dir_superadmin', 'administrator', true);
 });
 
 /*

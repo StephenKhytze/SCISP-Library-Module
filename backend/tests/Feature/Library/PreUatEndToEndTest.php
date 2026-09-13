@@ -8,7 +8,7 @@
  * known-good backend:
  *
  *   A. hold -> admin accepts -> checkout to holder
- *   D. renew is blocked while another user waits via a hold
+ *   D. renewal approval is blocked while another user waits via a hold
  *   G. faculty requests -> admin approves -> admin allocates -> eligible student borrows
  *
  * Runs against sqlite :memory:; the live MySQL database is never touched.
@@ -152,7 +152,7 @@ test('A3: a second user joins the waitlist when no copy is free', function () {
 |--------------------------------------------------------------------------
 */
 
-test('D1: renew is blocked while another user waits via a hold', function () {
+test('D1: renewal approval is blocked while another user waits via a hold', function () {
     $book = uatBook();
     $copy = uatCopy($book, 'checked_out');
 
@@ -164,24 +164,35 @@ test('D1: renew is blocked while another user waits via a hold', function () {
         'status' => 'active',
     ]);
 
-    // Renew works while nobody is waiting.
-    $this->withHeaders(uatAs('Student', 'uat_student'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
+    // Approval works while nobody is waiting.
+    $firstRequest = $this->withHeaders(uatAs('Student', 'uat_student'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->assertStatus(201)
+        ->json('renewal_request.renewal_request_id');
+
+    $this->withHeaders(uatAs('Admin', 'uat_admin'))
+        ->putJson("/api/library/renewals/{$firstRequest}/approve")
         ->assertStatus(200);
 
     // Another borrower joins the queue.
     $this->withHeaders(uatAs('Student', 'uat_student2'))
         ->postJson("/api/library/books/{$book->book_id}/holds")->assertStatus(201);
 
-    // Now renewal is refused, for the owner and for a librarian alike.
-    $this->withHeaders(uatAs('Student', 'uat_student'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
-        ->assertStatus(422)
-        ->assertJsonFragment(['error' => 'Cannot renew: This book has pending holds.']);
+    // The borrower may still ask...
+    $secondRequest = $this->withHeaders(uatAs('Student', 'uat_student'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->assertStatus(201)
+        ->json('renewal_request.renewal_request_id');
 
+    $dueBefore = $loan->fresh()->due_date;
+
+    // ...but the librarian cannot approve it while someone is waiting.
     $this->withHeaders(uatAs('Admin', 'uat_admin'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
-        ->assertStatus(422);
+        ->putJson("/api/library/renewals/{$secondRequest}/approve")
+        ->assertStatus(422)
+        ->assertJsonPath('error', 'This loan cannot be renewed because another borrower is waiting for this title.');
+
+    expect($loan->fresh()->due_date->eq($dueBefore))->toBeTrue();
 });
 
 /*

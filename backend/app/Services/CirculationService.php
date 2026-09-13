@@ -5,7 +5,7 @@ namespace App\Services;
 use App\Models\BookCopy;
 use App\Models\Transaction;
 use App\Models\User;
-use Illuminate\Support\Carbon;
+use Carbon\CarbonInterface;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
@@ -13,11 +13,16 @@ class CirculationService
 {
     protected $finesCalculator;
     protected $holdService;
+    protected LibrarySettingsService $settings;
 
-    public function __construct(FinesCalculator $finesCalculator, HoldService $holdService)
-    {
+    public function __construct(
+        FinesCalculator $finesCalculator,
+        HoldService $holdService,
+        LibrarySettingsService $settings
+    ) {
         $this->finesCalculator = $finesCalculator;
         $this->holdService = $holdService;
+        $this->settings = $settings;
     }
 
     /**
@@ -25,13 +30,9 @@ class CirculationService
      */
     protected function getDueDateForRole(string $role)
     {
-        $days = match ($this->normalizeRole($role)) {
-            'faculty' => 14,
-            'administrator' => 30,
-            default => 7,
-        };
-
-        return now()->addDays($days);
+        // Read at checkout time. Changing the loan length later moves future
+        // due dates only; loans already out keep the date they were given.
+        return now()->addDays($this->settings->loanDaysFor($this->normalizeRole($role)));
     }
 
     /**
@@ -56,7 +57,11 @@ class CirculationService
         return 'student';
     }
 
-    /** Admin and Super Admin are the same inside the Library module. */
+    /**
+     * Admin and Super Admin are both librarians — they run the desk.
+     * Where they now differ is BORROWING, which is a property of the borrower's
+     * account (User::canBorrow), not of the role string.
+     */
     protected function isLibrarian(?string $role): bool
     {
         return $this->normalizeRole($role) === 'administrator';
@@ -65,11 +70,7 @@ class CirculationService
     /** Maximum concurrent active loans, or null when unlimited. */
     public function getBorrowLimitForRole(string $dbRole): ?int
     {
-        return match ($dbRole) {
-            'student' => 3,
-            'faculty' => 10,
-            default => null, // Librarians are not limited.
-        };
+        return $this->settings->maxBooksFor($dbRole);
     }
 
     /**
@@ -100,7 +101,27 @@ class CirculationService
                 throw new Exception("Borrower not found.");
             }
 
+            // An archived title has been withdrawn from circulation.
+            $book = \App\Models\Book::find($copy->book_id);
+
+            if ($book && $book->isArchived()) {
+                throw new Exception('This title has been archived and is no longer available for borrowing.');
+            }
+
+            // Management-only accounts are not borrowers. This has to be read
+            // from the borrower's record: on checkout the borrower arrives as a
+            // user_id and sends no role header of their own.
+            if (! $user->canBorrow()) {
+                throw new Exception('Super Admin accounts cannot borrow library materials.');
+            }
+
             $borrowerRole = $this->normalizeRole($user->role);
+
+            // Borrowing can be switched off for a whole role, e.g. during a
+            // stocktake or at the end of term.
+            if (! $this->settings->borrowingEnabledFor($borrowerRole)) {
+                throw new Exception('Borrowing is currently disabled for this borrower category.');
+            }
 
             // Outstanding fines block further borrowing until a librarian settles them.
             if ((float) $user->total_fines > 0) {
@@ -150,7 +171,7 @@ class CirculationService
                         ->where('user_id', $userId)
                         ->where('status', 'fulfilled')
                         ->first();
-                    
+
                     if (!$userHold) {
                         throw new Exception("This copy is currently reserved for another user.");
                     }
@@ -164,7 +185,7 @@ class CirculationService
 
             $dueDate = $this->getDueDateForRole($user->role);
             if ($isReserved) {
-                $dueDate = now()->addDays(14);
+                $dueDate = now()->addDays($this->settings->reserveLoanDays());
             }
 
             // Create the transaction
@@ -176,10 +197,15 @@ class CirculationService
                 'status' => 'active',
             ]);
 
-            // Clear any pending or fulfilled holds the user has for this book
+            // Clear any pending or fulfilled hold this borrower had for the copy
+            // they just received. Scoped to the same pool the copy came from, so
+            // checking out a reserve copy never silently cancels the borrower's
+            // separate general-circulation hold for the same title.
             $existingHold = \App\Models\Hold::where('book_id', $copy->book_id)
                 ->where('user_id', $user->user_id)
                 ->whereIn('status', ['pending', 'fulfilled'])
+                ->when($copy->reserve_id, fn ($q) => $q->where('reserve_id', $copy->reserve_id))
+                ->when(! $copy->reserve_id, fn ($q) => $q->whereNull('reserve_id'))
                 ->first();
 
             if ($existingHold) {
@@ -241,10 +267,17 @@ class CirculationService
             $transaction->load('bookCopy');
             $isReserved = $transaction->bookCopy && $transaction->bookCopy->reserve_id !== null;
 
-            // Mark the copy as available again, OR fulfill a hold if someone is waiting
+            // Mark the copy as available again, OR fulfill a hold if someone is waiting.
+            // A reserve copy advances its own reserve's queue; a general copy
+            // advances the title's general waitlist. The two never cross.
             $wasHoldFulfilled = false;
-            
-            if (!$isReserved) {
+
+            if ($isReserved) {
+                $wasHoldFulfilled = $this->holdService->advanceReserveQueue(
+                    (int) $transaction->bookCopy->reserve_id,
+                    $transaction->copy_id
+                );
+            } else {
                 $wasHoldFulfilled = $this->holdService->advanceQueue($transaction->bookCopy->book_id, $transaction->copy_id);
             }
 
@@ -258,59 +291,18 @@ class CirculationService
         });
     }
 
-    public function renew(int $transactionId, int $userId, string $role): Transaction
+    /**
+     * The due date an approved renewal should produce.
+     *
+     * Borrowers no longer renew directly — RenewalService::approve is the only
+     * caller, so the rule lives here but the decision lives there.
+     */
+    public function dueDateForRenewal(Transaction $transaction, bool $isReserved): CarbonInterface
     {
-        return DB::transaction(function () use ($transactionId, $userId, $role) {
-            $transaction = Transaction::with(['user', 'bookCopy'])->where('transaction_id', $transactionId)->lockForUpdate()->first();
+        if ($isReserved) {
+            return now()->addDays($this->settings->reserveLoanDays());
+        }
 
-            if (!$transaction) {
-                throw new Exception("Transaction not found.");
-            }
-
-            if ($transaction->status !== 'active') {
-                throw new Exception("Transaction is already closed.");
-            }
-
-            $isReserved = $transaction->bookCopy && $transaction->bookCopy->reserve_id !== null;
-
-            // Librarians may renew any loan; everyone else only their own.
-            $isLibrarian = $this->isLibrarian($role);
-            $isOwnLoan = (int) $transaction->user_id === (int) $userId;
-
-            if (! $isLibrarian && ! $isOwnLoan) {
-                // Existing course-reserve allowance (frozen feature): the teacher who
-                // owns the reserve may renew a loan on one of its copies.
-                $ownsReserve = false;
-
-                if ($isReserved) {
-                    $reserve = \App\Models\CourseReserve::find($transaction->bookCopy->reserve_id);
-                    $ownsReserve = $reserve && (int) $reserve->user_id === (int) $userId;
-                }
-
-                if (! $ownsReserve) {
-                    throw new Exception("You are not authorized to renew this book.");
-                }
-            }
-
-            if (!$isReserved) {
-                $hasHolds = \App\Models\Hold::where('book_id', $transaction->bookCopy->book_id)
-                    ->whereIn('status', ['pending', 'pending_approval'])
-                    ->exists();
-
-                if ($hasHolds) {
-                    throw new Exception("Cannot renew: This book has pending holds.");
-                }
-            }
-
-            $dueDate = $this->getDueDateForRole($transaction->user->role ?? 'student');
-            if ($isReserved) {
-                $dueDate = now()->addDays(14);
-            }
-
-            $transaction->due_date = $dueDate;
-            $transaction->save();
-
-            return $transaction;
-        });
+        return $this->getDueDateForRole($transaction->user->role ?? 'student');
     }
 }

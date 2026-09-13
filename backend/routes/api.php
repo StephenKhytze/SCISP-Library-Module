@@ -80,13 +80,17 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
     
     // Public Catalog Search (Authenticated users)
     Route::get('/books', [\App\Http\Controllers\Api\BookController::class, 'index']);
-    Route::get('/categories', [\App\Http\Controllers\Api\BookController::class, 'categories']);
+    Route::get('/categories', [\App\Http\Controllers\Api\LibraryCategoryController::class, 'index']);
     Route::get('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'show']);
     
     // My Loans & Holds
     Route::get('/loans/me', [\App\Http\Controllers\Api\CirculationController::class, 'myLoans']);
     Route::get('/loans/me/history', [\App\Http\Controllers\Api\CirculationController::class, 'myHistory']);
-    Route::post('/loans/renew', [\App\Http\Controllers\Api\CirculationController::class, 'renew']);
+    // Renewal now needs a librarian's decision. Borrowers may only ask;
+    // Super Admin accounts cannot borrow, so they cannot ask either.
+    Route::post('/renewals', [\App\Http\Controllers\Api\RenewalController::class, 'store'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Student,Faculty,Teacher,Admin');
+    Route::get('/renewals/me', [\App\Http\Controllers\Api\RenewalController::class, 'myRequests']);
     Route::get('/holds/me', [\App\Http\Controllers\Api\HoldController::class, 'myHolds']);
 
     // Own summary (balance, active loans, borrow limit) and own fine balance.
@@ -99,6 +103,9 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
     
     // Course Sections (Faculty & Students)
     Route::get('/sections/me', [\App\Http\Controllers\Api\CourseSectionController::class, 'mySections']);
+    // D-1: roster of ONE section, authorised per-section inside the controller.
+    // Deliberately not the unrestricted directory that SEC-05 locked down.
+    Route::get('/sections/{sectionId}/classmates', [\App\Http\Controllers\Api\CourseSectionController::class, 'classmates']);
     Route::get('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'index']);
     Route::post('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'store']);
     // SEC-05: the student directory is roster tooling, not borrower-facing.
@@ -116,6 +123,12 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
     Route::post('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'store'])
         ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
 
+    // D-3: an enrolled student asks to borrow from one course reserve. Only
+    // that reserve's allocated copies are eligible; the librarian still does
+    // the physical checkout.
+    Route::post('/reserves/{id}/request', [\App\Http\Controllers\Api\ReserveController::class, 'requestCopy'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Student');
+
     // Admin/Super Admin may approve, deny or release. Faculty may release ONLY their own
     // reserve — that ownership check lives in ReserveController::updateStatus.
     Route::put('/reserves/{id}/status', [\App\Http\Controllers\Api\ReserveController::class, 'updateStatus'])
@@ -128,6 +141,23 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
         Route::post('/books/{id}/copies', [\App\Http\Controllers\Api\BookCopyController::class, 'store']);
         Route::put('/copies/{id}', [\App\Http\Controllers\Api\BookCopyController::class, 'update']);
 
+        // Category vocabulary. Reading is open to everyone (see above);
+        // only a librarian may add to it or rename one.
+        Route::post('/categories', [\App\Http\Controllers\Api\LibraryCategoryController::class, 'store']);
+        Route::put('/categories/{id}', [\App\Http\Controllers\Api\LibraryCategoryController::class, 'update']);
+
+        // Cover images live on the TITLE, not on individual copies.
+        Route::post('/books/{id}/cover', [\App\Http\Controllers\Api\BookController::class, 'uploadCover']);
+        Route::delete('/books/{id}/cover', [\App\Http\Controllers\Api\BookController::class, 'removeCover']);
+
+        // Archive replaces delete: history stays readable, borrowing stops.
+        Route::post('/books/{id}/archive', [\App\Http\Controllers\Api\BookController::class, 'archive']);
+        Route::post('/books/{id}/restore', [\App\Http\Controllers\Api\BookController::class, 'restore']);
+
+        // Operational rules. These decide what every borrower may do.
+        Route::get('/settings', [\App\Http\Controllers\Api\LibrarySettingsController::class, 'index']);
+        Route::put('/settings', [\App\Http\Controllers\Api\LibrarySettingsController::class, 'update']);
+
         // Course Reserves (Admin only)
         Route::get('/reserves', [\App\Http\Controllers\Api\ReserveController::class, 'index']);
         Route::post('/reserves/{id}/allocate', [\App\Http\Controllers\Api\ReserveController::class, 'allocateCopies']);
@@ -138,6 +168,12 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
         Route::put('/holds/{id}/accept', [\App\Http\Controllers\Api\HoldController::class, 'acceptHold']);
         Route::post('/checkout', [\App\Http\Controllers\Api\CirculationController::class, 'checkout']);
         Route::post('/checkin', [\App\Http\Controllers\Api\CirculationController::class, 'checkin']);
+
+        // Renewal approvals. Both administrator personas decide; neither can
+        // borrow on a Super Admin account, but both run the desk.
+        Route::get('/renewals', [\App\Http\Controllers\Api\RenewalController::class, 'index']);
+        Route::put('/renewals/{id}/approve', [\App\Http\Controllers\Api\RenewalController::class, 'approve']);
+        Route::put('/renewals/{id}/deny', [\App\Http\Controllers\Api\RenewalController::class, 'deny']);
 
         // Fines — balance lives on users.total_fines; settlement records Paid or Waived.
         Route::get('/fines', [\App\Http\Controllers\Api\FinesController::class, 'index']);

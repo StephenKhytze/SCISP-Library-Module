@@ -95,6 +95,49 @@ class ReserveController extends Controller
         return response()->json($reserve);
     }
 
+    /**
+     * D-3: an enrolled student asks to borrow from THIS course reserve.
+     *
+     * Only copies allocated to this reserve are ever considered — a general
+     * circulation copy of the same title is never used. If every allocated copy
+     * is out, the student joins this reserve's own queue, not the title's.
+     *
+     * The librarian still performs the physical checkout; this only sets a copy
+     * aside or takes a place in line.
+     */
+    public function requestCopy(Request $request, $id)
+    {
+        try {
+            $hold = app(\App\Services\HoldService::class)->requestReserveCopy(
+                (int) $request->attributes->get('user_id'),
+                (int) $id
+            );
+
+            $ready = $hold->status === 'fulfilled';
+
+            return response()->json([
+                'message' => $ready
+                    ? 'A copy has been set aside for you. Collect it at the circulation desk.'
+                    : 'All allocated copies are in use. You have been added to the queue for this course reserve.',
+                'request' => $hold,
+                'status' => $ready ? 'ready_for_pickup' : 'queued',
+                'queue_position' => $ready ? null : $hold->queue_position,
+            ], 201);
+        } catch (\Illuminate\Database\QueryException $e) {
+            report($e);
+
+            return response()->json([
+                'message' => 'Could not request this course reserve.',
+                'error' => 'Something went wrong on our side. Please try again.',
+            ], 500);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Could not request this course reserve.',
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+    }
+
     public function allocateCopies(Request $request, $id)
     {
         $reserve = CourseReserve::findOrFail($id);

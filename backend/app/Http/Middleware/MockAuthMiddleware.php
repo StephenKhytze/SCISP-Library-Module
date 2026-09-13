@@ -76,9 +76,26 @@ class MockAuthMiddleware
             ], 403);
         }
 
+        // Admin and Super Admin are no longer interchangeable, so the persona
+        // claimed in the header must match the stored flag in BOTH directions.
+        // Without the second check a Super Admin could simply send
+        // "X-Mock-Role: Admin" and borrow anyway, which is exactly the rule
+        // this is meant to enforce.
+        if ($dbRole === 'administrator') {
+            $claimsSuperAdmin = str_contains($normalizedRole, 'super');
+
+            if ($claimsSuperAdmin !== $userModel->isSuperAdmin()) {
+                return response()->json([
+                    'message' => 'Forbidden. Supplied role does not match the user account.',
+                ], 403);
+            }
+        }
+
         // Pass the role and user_id down to the controllers
         $request->attributes->set('role', $role);
         $request->attributes->set('user_id', $userModel->user_id);
+        // Resolved once here so no controller has to re-derive it from the header.
+        $request->attributes->set('is_super_admin', $userModel->isSuperAdmin());
 
         return $next($request);
     }

@@ -1,7 +1,10 @@
 import axios from 'axios';
 
+// The backend origin comes from VITE_API_URL (see .env.example). The literal
+// below is only the local-development fallback, so a deployed build points at
+// the real API without a code change.
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api', // Laravel API endpoint
+  baseURL: import.meta.env.VITE_API_URL || 'http://localhost:8000/api',
 });
 
 api.interceptors.request.use((config) => {

@@ -76,45 +76,13 @@ class CirculationController extends Controller
     }
 
     /**
-     * Renew a borrowed book copy.
-     */
-    public function renew(Request $request)
-    {
-        $validated = $request->validate([
-            'transaction_id' => 'required|exists:transactions,transaction_id',
-        ]);
-
-        $userId = $request->attributes->get('user_id');
-        $role = $request->attributes->get('role', 'student');
-
-        try {
-            $transaction = $this->circulationService->renew(
-                $validated['transaction_id'],
-                $userId,
-                $role
-            );
-
-            return response()->json([
-                'message' => 'Renewal successful.',
-                'transaction' => $transaction
-            ], 200);
-
-        } catch (Exception $e) {
-            return response()->json([
-                'message' => 'Renewal failed.',
-                'error' => $e->getMessage()
-            ], 422);
-        }
-    }
-
-    /**
      * Get active loans for the authenticated user.
      */
     public function myLoans(Request $request)
     {
         $userId = $request->attributes->get('user_id');
 
-        $loans = Transaction::with(['bookCopy.book'])
+        $loans = Transaction::with(['bookCopy.book', 'latestRenewalRequest'])
             ->where('user_id', $userId)
             ->where('status', 'active')
             ->orderByDesc('transaction_id')
@@ -131,7 +99,7 @@ class CirculationController extends Controller
     {
         $userId = $request->attributes->get('user_id');
 
-        $history = Transaction::with(['bookCopy.book'])
+        $history = Transaction::with(['bookCopy.book', 'latestRenewalRequest'])
             ->where('user_id', $userId)
             ->orderByDesc('transaction_id')
             ->get();
@@ -169,28 +137,62 @@ class CirculationController extends Controller
         $user = \App\Models\User::find($userId);
 
         $dbRole = $this->circulationService->normalizeRole($user->role ?? 'student');
-        $limit = $this->circulationService->getBorrowLimitForRole($dbRole);
+        $isSuperAdmin = $user && $user->isSuperAdmin();
+        $canBorrow = $user ? $user->canBorrow() : false;
 
-        $activeLoans = Transaction::where('user_id', $userId)->where('status', 'active')->count();
+        // A management-only account has no borrowing limit because it has no
+        // borrowing at all; null here would read as "unlimited".
+        $limit = $canBorrow ? $this->circulationService->getBorrowLimitForRole($dbRole) : 0;
 
-        $overdueLoans = Transaction::where('user_id', $userId)
-            ->where('status', 'active')
-            ->whereNotNull('due_date')
-            ->where('due_date', '<', now())
-            ->count();
+        $activeLoans = $canBorrow
+            ? Transaction::where('user_id', $userId)->where('status', 'active')->count()
+            : 0;
 
-        return response()->json([
+        $overdueLoans = $canBorrow
+            ? Transaction::where('user_id', $userId)
+                ->where('status', 'active')
+                ->whereNotNull('due_date')
+                ->where('due_date', '<', now())
+                ->count()
+            : 0;
+
+        $payload = [
             'user_id' => $user?->user_id,
             'username' => $user?->username,
             'role' => $dbRole,
+            // Admin and Super Admin share the database role, so this flag is
+            // the only thing that separates them for the client.
+            'is_super_admin' => $isSuperAdmin,
+            'can_borrow' => $canBorrow,
             'total_fines' => round((float) ($user->total_fines ?? 0), 2),
             'active_loans' => $activeLoans,
             'overdue_loans' => $overdueLoans,
             'borrow_limit' => $limit,
-            'holds' => \App\Models\Hold::where('user_id', $userId)
-                ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
-                ->count(),
-        ]);
+            'holds' => $canBorrow
+                ? \App\Models\Hold::where('user_id', $userId)
+                    ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
+                    ->count()
+                : 0,
+            'pending_renewals' => $canBorrow
+                ? \App\Models\RenewalRequest::where('user_id', $userId)->where('status', 'pending')->count()
+                : 0,
+        ];
+
+        // Desk counters for the navigation badges. A handful of cheap COUNTs
+        // here saves the client from loading four full admin datasets just to
+        // label a tab.
+        if ($dbRole === 'administrator') {
+            $payload['librarian'] = [
+                'active_loans' => Transaction::where('status', 'active')->count(),
+                'pending_holds' => \App\Models\Hold::whereIn('status', ['pending', 'pending_approval', 'fulfilled'])->count(),
+                'pending_renewals' => \App\Models\RenewalRequest::where('status', 'pending')->count(),
+                'debtors' => \App\Models\User::where('total_fines', '>', 0)->count(),
+                'pending_reserves' => \App\Models\CourseReserve::where('status', 'pending')->count(),
+                'total_reserves' => \App\Models\CourseReserve::count(),
+            ];
+        }
+
+        return response()->json($payload);
     }
 
     public function activeHolds(Request $request)

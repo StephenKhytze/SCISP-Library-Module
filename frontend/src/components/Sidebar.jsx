@@ -17,14 +17,17 @@ export default function Sidebar() {
 
   return (
     <aside 
-      className={`${isCollapsed ? 'w-[100px]' : 'w-[280px]'} bg-[#80172B] text-white flex flex-col min-h-[calc(100vh-86px)] shrink-0 transition-all duration-300 ease-in-out`}
+      className={`${isCollapsed ? 'w-[100px]' : 'w-[280px]'} bg-[#80172B] text-white hidden lg:flex flex-col h-full overflow-y-auto shrink-0 transition-all duration-300 ease-in-out`}
+      aria-label="Main navigation"
     >
       {/* Collapse arrow at the top right of sidebar */}
       <div className={`flex ${isCollapsed ? 'justify-center' : 'justify-end'} p-5 transition-all duration-300`}>
         <button 
           onClick={() => setIsCollapsed(!isCollapsed)}
-          className="text-white hover:bg-white/10 p-1.5 rounded transition-colors focus:outline-none"
+          className="text-white hover:bg-white/10 p-1.5 rounded transition-colors"
           title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
+          aria-label={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-expanded={!isCollapsed}
         >
           {isCollapsed ? <ArrowRight className="w-6 h-6 text-white/80" /> : <ArrowLeft className="w-6 h-6 text-white/80" />}
         </button>
@@ -38,6 +41,7 @@ export default function Sidebar() {
             <div key={item.path} className="relative">
               <Link
                 to={item.path}
+                aria-current={isActive ? 'page' : undefined}
                 className={`flex items-center py-4 transition-all duration-300 ${
                   isActive
                     ? 'bg-[#182848] text-white rounded-r-2xl shadow-[6px_0_15px_rgba(0,0,0,0.25)] w-[calc(100%+20px)] relative z-10'

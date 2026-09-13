@@ -46,14 +46,19 @@ function reserveAuthAs(string $role, string $username): array
     ];
 }
 
-function reserveAuthUser(string $username, string $dbRole): User
+function reserveAuthUser(string $username, string $dbRole, bool $isSuperAdmin = false): User
 {
-    return User::create([
+    $user = User::create([
         'username' => $username,
         'password' => 'password',
         'role' => $dbRole,
         'status' => 'active',
     ]);
+
+    // Not mass-assignable: forced here because this is trusted test setup.
+    $user->forceFill(['is_super_admin' => $isSuperAdmin])->save();
+
+    return $user;
 }
 
 function reserveAuthBook(): Book
@@ -106,7 +111,7 @@ beforeEach(function () {
     $this->teacherOwner = reserveAuthUser('faculty_owner', 'faculty');
     $this->teacherOther = reserveAuthUser('faculty_other', 'faculty');
     $this->admin = reserveAuthUser('admin', 'administrator');
-    $this->superAdmin = reserveAuthUser('superadmin', 'administrator');
+    $this->superAdmin = reserveAuthUser('superadmin', 'administrator', true);
 });
 
 /*

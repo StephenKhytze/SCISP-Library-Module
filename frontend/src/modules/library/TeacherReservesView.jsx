@@ -1,10 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import api from '../../api';
+import StatusBadge from './StatusBadge';
+import { useToast } from './ToastProvider';
+import { useConfirm } from './ConfirmDialog';
+import useDialog from './useDialog';
 
-export default function TeacherReservesView({ user, books, fetchData }) {
+export default function TeacherReservesView({ books, onSectionsLoaded }) {
+  const toast = useToast();
+  const confirm = useConfirm();
+
   const [sections, setSections] = useState([]);
   const [allStudents, setAllStudents] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(null);
   const [activeSectionIdForStudent, setActiveSectionIdForStudent] = useState(null);
   const [newStudentId, setNewStudentId] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -20,86 +28,120 @@ export default function TeacherReservesView({ user, books, fetchData }) {
     teacher_to_student_note: ''
   });
 
-  useEffect(() => {
-    fetchSections();
-    fetchStudents();
-  }, []);
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setNewSectionName('');
+  };
 
-  const fetchSections = async () => {
+  const createModalRef = useDialog(showCreateModal, closeCreateModal);
+  const reserveModalRef = useDialog(showReserveModal, () => setShowReserveModal(false));
+
+  // Held in refs so the fetchers stay stable and the mount effect does not
+  // re-run every render.
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
+  const onSectionsLoadedRef = useRef(onSectionsLoaded);
+  onSectionsLoadedRef.current = onSectionsLoaded;
+
+  const fetchSections = useCallback(async () => {
     try {
       setLoading(true);
       const res = await api.get('/library/sections');
       setSections(res.data);
+      // Lets the portal show a real Course Reserves badge for faculty, which
+      // otherwise has no reserve data of its own for this role.
+      onSectionsLoadedRef.current?.(res.data);
     } catch (error) {
       console.error("Failed to fetch sections", error);
+      toastRef.current.error(`Could not load your sections: ${error.response?.data?.message || error.message}`);
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchStudents = async () => {
+  const fetchStudents = useCallback(async () => {
     try {
       const res = await api.get('/library/students');
       setAllStudents(res.data);
     } catch (error) {
       console.error("Failed to fetch students", error);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    fetchSections();
+    fetchStudents();
+  }, [fetchSections, fetchStudents]);
 
   const submitCreateSection = async () => {
-    if (!newSectionName) return;
+    if (!newSectionName.trim()) {
+      toast.warning('Please give the section a name.');
+      return;
+    }
+    setBusy('create-section');
     try {
       await api.post('/library/sections', { name: newSectionName });
       setNewSectionName('');
       setShowCreateModal(false);
+      toast.success('Section created.');
       fetchSections();
     } catch (error) {
-      alert(`Failed to create section: ${error.response?.data?.message || error.message}`);
+      toast.error(`Failed to create section: ${error.response?.data?.message || error.message}`);
+    } finally {
+      setBusy(null);
     }
   };
 
   const handleAddStudent = async (sectionId) => {
-    if (!newStudentId) return alert("Please enter or select a Student ID.");
+    if (!newStudentId) {
+      toast.warning('Please enter or select a Student ID.');
+      return;
+    }
+    setBusy(`add-student-${sectionId}`);
     try {
       await api.post(`/library/sections/${sectionId}/students`, { student_id: newStudentId });
       setNewStudentId('');
       setActiveSectionIdForStudent(null);
+      toast.success('Student added to the section.');
       fetchSections();
     } catch (error) {
-      alert(`Failed to add student: ${error.response?.data?.message || error.message}`);
+      toast.error(`Failed to add student: ${error.response?.data?.message || error.message}`);
+    } finally {
+      setBusy(null);
     }
   };
 
   const handleRemoveStudent = async (sectionId, studentId) => {
-    if (!window.confirm("Remove this student from the section?")) return;
+    const ok = await confirm({
+      title: 'Remove student',
+      message: 'Remove this student from the section? They will lose access to this section’s course reserves.',
+      confirmText: 'Remove',
+      isDestructive: true,
+    });
+    if (!ok) return;
+
+    setBusy(`remove-student-${studentId}`);
     try {
       await api.delete(`/library/sections/${sectionId}/students/${studentId}`);
+      toast.success('Student removed from the section.');
       fetchSections();
     } catch (error) {
-      alert(`Failed to remove student: ${error.response?.data?.message || error.message}`);
-    }
-  };
-
-  const handleRenew = async (transactionId) => {
-    try {
-      await api.post('/library/loans/renew', { transaction_id: transactionId });
-      alert("Book renewed successfully!");
-      fetchSections();
-      if (fetchData) fetchData();
-    } catch (error) {
-      console.error(error);
-      alert(`Renewal failed: ${error.response?.data?.message || error.message}`);
+      toast.error(`Failed to remove student: ${error.response?.data?.message || error.message}`);
+    } finally {
+      setBusy(null);
     }
   };
 
   const submitReserveRequest = async (e) => {
     e.preventDefault();
     if (!reserveForm.section_id || !reserveForm.book_id) {
-      return alert("Please select a section and a book.");
+      toast.warning('Please select a section and a book.');
+      return;
     }
+    setBusy('request-reserve');
     try {
       await api.post('/library/reserves', reserveForm);
-      alert('Course reserve requested successfully!');
+      toast.success('Course reserve requested. A librarian will review it.');
       setShowReserveModal(false);
       setReserveForm({
         section_id: '',
@@ -111,7 +153,9 @@ export default function TeacherReservesView({ user, books, fetchData }) {
       });
       fetchSections();
     } catch (error) {
-      alert(`Failed to request reserve: ${error.response?.data?.message || error.message}`);
+      toast.error(`Failed to request reserve: ${error.response?.data?.message || error.message}`);
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -144,9 +188,16 @@ export default function TeacherReservesView({ user, books, fetchData }) {
   const renderCreateModal = () => {
     if (!showCreateModal) return null;
     return (
-      <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
-        <div className="bg-white rounded-[2rem] p-6 w-full max-w-md shadow-xl border border-gray-100">
-          <h2 className="text-[20px] font-extrabold text-[#0f172a] mb-4">Create New Section</h2>
+      <div className="fixed inset-0 flex items-center justify-center z-[100] p-4">
+        <div className="absolute inset-0 bg-black/50 anim-fade-in" onClick={closeCreateModal} aria-hidden="true" />
+        <div
+          ref={createModalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="create-section-title"
+          className="relative z-10 bg-white rounded-[2rem] p-6 w-full max-w-md shadow-xl border border-gray-100 anim-zoom-in"
+        >
+          <h2 id="create-section-title" className="text-[20px] font-extrabold text-[#0f172a] mb-4">Create New Section</h2>
           <div className="mb-5">
             <label className="block text-[12px] font-bold text-slate-500 uppercase tracking-wider mb-2">Section Name</label>
             <input 
@@ -160,20 +211,18 @@ export default function TeacherReservesView({ user, books, fetchData }) {
             />
           </div>
           <div className="flex gap-2 justify-end">
-            <button 
-              onClick={() => {
-                setShowCreateModal(false);
-                setNewSectionName('');
-              }}
+            <button
+              onClick={closeCreateModal}
               className="px-4 py-2 text-[12px] font-bold text-slate-500 hover:text-slate-700"
             >
               Cancel
             </button>
-            <button 
+            <button
               onClick={submitCreateSection}
-              className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-xl text-[12px] font-extrabold shadow-sm transition-colors"
+              disabled={busy === 'create-section'}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 rounded-xl text-[12px] font-extrabold shadow-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              Create Section
+              {busy === 'create-section' ? 'Creating…' : 'Create Section'}
             </button>
           </div>
         </div>
@@ -184,19 +233,27 @@ export default function TeacherReservesView({ user, books, fetchData }) {
   const renderReserveModal = () => {
     if (!showReserveModal) return null;
     return (
-      <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-[100]">
-        <div className="bg-white rounded-[1.5rem] p-5 shadow-2xl border border-slate-100 max-w-md w-full">
+      <div className="fixed inset-0 flex items-center justify-center p-4 z-[100]">
+        <div className="absolute inset-0 bg-black/50 backdrop-blur-xs anim-fade-in" onClick={() => setShowReserveModal(false)} aria-hidden="true" />
+        <div
+          ref={reserveModalRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="request-reserve-title"
+          className="relative z-10 bg-white rounded-[1.5rem] p-5 shadow-2xl border border-slate-100 max-w-md w-full anim-zoom-in"
+        >
           <div className="flex justify-between items-start mb-3">
             <div>
               <span className="inline-block bg-[#0369a1] text-white text-[8.5px] font-black uppercase px-2 py-0.5 rounded tracking-wider mb-1">
                 FACULTY REQUEST
               </span>
-              <h2 className="text-[16px] font-extrabold text-[#0f172a] leading-tight">
+              <h2 id="request-reserve-title" className="text-[16px] font-extrabold text-[#0f172a] leading-tight">
                 Request Course Reserve
               </h2>
             </div>
             <button
               onClick={() => setShowReserveModal(false)}
+              aria-label="Close course reserve request"
               className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer"
             >
               ✕
@@ -277,9 +334,10 @@ export default function TeacherReservesView({ user, books, fetchData }) {
               </button>
               <button
                 type="submit"
-                className="px-3.5 py-1.5 bg-[#8B1A24] text-white rounded-xl text-xs font-extrabold hover:bg-[#6b141c] cursor-pointer"
+                disabled={busy === 'request-reserve'}
+                className="px-3.5 py-1.5 bg-[#8B1A24] text-white rounded-xl text-xs font-extrabold hover:bg-[#6b141c] cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Submit Request
+                {busy === 'request-reserve' ? 'Submitting…' : 'Submit Request'}
               </button>
             </div>
           </form>
@@ -360,11 +418,12 @@ export default function TeacherReservesView({ user, books, fetchData }) {
                   </option>
                 ))}
               </select>
-              <button 
+              <button
                 onClick={() => handleAddStudent(section.section_id)}
-                className="bg-[#0369a1] text-white px-4 py-2 rounded-lg text-[11px] font-extrabold w-full sm:w-auto"
+                disabled={busy === `add-student-${section.section_id}`}
+                className="bg-[#0369a1] text-white px-4 py-2 rounded-lg text-[11px] font-extrabold w-full sm:w-auto disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Add
+                {busy === `add-student-${section.section_id}` ? 'Adding…' : 'Add'}
               </button>
             </div>
           )}
@@ -381,7 +440,7 @@ export default function TeacherReservesView({ user, books, fetchData }) {
                         {reserve.book?.book_title}
                       </h3>
                       <div className="flex items-center gap-2 mb-3">
-                        <span className="text-[10px] font-bold text-slate-500 uppercase">Status: {reserve.status}</span>
+                        <StatusBadge status={reserve.status} />
                       </div>
 
                       {/* Physical Copies and Borrowers */}
@@ -395,11 +454,12 @@ export default function TeacherReservesView({ user, books, fetchData }) {
                                 <div key={copy.copy_id} className="flex flex-col bg-white border border-slate-200 p-2.5 rounded-lg shadow-2xs gap-2">
                                   <div className="flex justify-between items-start">
                                     <div>
-                                      <p className="text-[11px] font-extrabold text-[#0f172a]">{copy.barcode || `CPY-${copy.copy_id}`}</p>
+                                      {/* The accession number is the copy's real
+                                          identity; CPY-{id} is only a fallback for
+                                          copies that predate it. */}
+                                      <p className="font-mono text-[11px] font-extrabold text-[#0f172a]">{copy.accession_number || `CPY-${copy.copy_id}`}</p>
                                     </div>
-                                    <span className={`text-[9px] font-bold px-2 py-0.5 rounded-full ${activeTx ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                                      {activeTx ? 'Checked Out' : 'Available'}
-                                    </span>
+                                    <StatusBadge status={activeTx ? 'Checked Out' : 'Available'} />
                                   </div>
 
                                   {activeTx && (
@@ -410,12 +470,12 @@ export default function TeacherReservesView({ user, books, fetchData }) {
                                         </p>
                                         <p className="text-[9px] text-slate-400">Due: {new Date(activeTx.due_date).toLocaleDateString()}</p>
                                       </div>
-                                      <button
-                                        onClick={() => handleRenew(activeTx.transaction_id)}
-                                        className="bg-emerald-600 hover:bg-emerald-700 text-white text-[9px] font-extrabold py-1 px-2 rounded transition-colors"
-                                      >
-                                        Renew
-                                      </button>
+                                      {/* Renewal is now the borrower's request
+                                          and a librarian's decision, so there is
+                                          no teacher-side action here. */}
+                                      <span className="text-[9px] font-bold text-slate-400 uppercase tracking-wider">
+                                        On loan
+                                      </span>
                                     </div>
                                   )}
                                 </div>
@@ -445,11 +505,12 @@ export default function TeacherReservesView({ user, books, fetchData }) {
                         <p className="text-[12px] font-extrabold text-[#0f172a]">{studentEntry.student?.username}</p>
                         <p className="text-[10px] text-slate-400">ID: {studentEntry.student_id}</p>
                       </div>
-                      <button 
+                      <button
                         onClick={() => handleRemoveStudent(section.section_id, studentEntry.student_id)}
-                        className="text-red-500 hover:text-red-700 text-[10px] font-extrabold bg-red-50 hover:bg-red-100 px-2 py-1 rounded"
+                        disabled={busy === `remove-student-${studentEntry.student_id}`}
+                        className="text-red-500 hover:text-red-700 text-[10px] font-extrabold bg-red-50 hover:bg-red-100 px-2 py-1 rounded disabled:opacity-60 disabled:cursor-not-allowed"
                       >
-                        Remove
+                        {busy === `remove-student-${studentEntry.student_id}` ? 'Removing…' : 'Remove'}
                       </button>
                     </div>
                   ))}

@@ -8,7 +8,7 @@
  *   - outstanding fines block checkout
  *   - course-reserve eligibility judged on the BORROWER, not the operator
  *   - fines: PHP 10 per overdue calendar day, partial day rounds UP
- *   - renew: own loan only, librarians may renew any
+ *   - renew: borrowers request, Admin/Super Admin approve
  *   - a copy with an active loan cannot be hand-set back to available
  */
 
@@ -30,15 +30,20 @@ function circAs(string $role, string $username): array
     return ['X-Mock-Role' => $role, 'X-Mock-Username' => $username];
 }
 
-function circUser(string $username, string $dbRole, float $fines = 0): User
+function circUser(string $username, string $dbRole, float $fines = 0, bool $isSuperAdmin = false): User
 {
-    return User::create([
+    $user = User::create([
         'username' => $username,
         'password' => 'password',
         'role' => $dbRole,
         'status' => 'active',
         'total_fines' => $fines,
     ]);
+
+    // Not mass-assignable: forced here because this is trusted test setup.
+    $user->forceFill(['is_super_admin' => $isSuperAdmin])->save();
+
+    return $user;
 }
 
 function circBook(): Book
@@ -104,26 +109,26 @@ afterEach(function () {
 */
 
 test('C1: returning on time incurs no fine', function () {
-    $calc = new FinesCalculator();
+    $calc = app(FinesCalculator::class);
     expect($calc->calculateFine(now()->addDay(), now()))->toBe(0.00);
 });
 
 test('C2: exactly two days overdue is PHP 20', function () {
-    $calc = new FinesCalculator();
+    $calc = app(FinesCalculator::class);
     $due = now()->subDays(2);
     expect($calc->overdueDays($due, now()))->toBe(2);
     expect($calc->calculateFine($due, now()))->toBe(20.00);
 });
 
 test('C3: two days and one hour overdue rounds up to three days = PHP 30', function () {
-    $calc = new FinesCalculator();
+    $calc = app(FinesCalculator::class);
     $due = now()->subDays(2)->subHour();
     expect($calc->overdueDays($due, now()))->toBe(3);
     expect($calc->calculateFine($due, now()))->toBe(30.00);
 });
 
 test('C4: one minute overdue is charged a full day', function () {
-    $calc = new FinesCalculator();
+    $calc = app(FinesCalculator::class);
     expect($calc->calculateFine(now()->subMinute(), now()))->toBe(10.00);
 });
 
@@ -316,50 +321,68 @@ function circActiveLoan(User $borrower): Transaction
     ]);
 }
 
-test('C15: a student may renew their own loan', function () {
-    $loan = circActiveLoan($this->student);
-
-    $this->withHeaders(circAs('Student', 'student_a'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
-        ->assertStatus(200);
-});
-
-test('C16: a student cannot renew someone elses loan', function () {
-    $loan = circActiveLoan($this->faculty);
-
-    $this->withHeaders(circAs('Student', 'student_a'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
-        ->assertStatus(422)
-        ->assertJsonFragment(['error' => 'You are not authorized to renew this book.']);
-});
-
-test('C17: an admin may renew any loan', function () {
+test('C15: a student may REQUEST a renewal of their own loan', function () {
     $loan = circActiveLoan($this->student);
     $original = $loan->due_date;
 
+    $this->withHeaders(circAs('Student', 'student_a'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->assertStatus(201)
+        ->assertJsonPath('renewal_request.status', 'pending');
+
+    // Asking must not move the date. Only an approval does that.
+    expect($loan->fresh()->due_date->eq($original))->toBeTrue();
+});
+
+test('C16: a student cannot request a renewal of someone elses loan', function () {
+    $loan = circActiveLoan($this->faculty);
+
+    $this->withHeaders(circAs('Student', 'student_a'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->assertStatus(422)
+        ->assertJsonPath('error', 'You can only request a renewal for your own loan.');
+});
+
+test('C17: an admin approving a request extends the due date', function () {
+    $loan = circActiveLoan($this->student);
+    $original = $loan->due_date;
+
+    $requestId = $this->withHeaders(circAs('Student', 'student_a'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->json('renewal_request.renewal_request_id');
+
     $this->withHeaders(circAs('Admin', 'admin_a'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
-        ->assertStatus(200);
+        ->putJson("/api/library/renewals/{$requestId}/approve")
+        ->assertStatus(200)
+        ->assertJsonPath('renewal_request.status', 'approved');
 
     expect($loan->fresh()->due_date->gt($original))->toBeTrue();
 });
 
-test('C18: a super admin may renew any loan', function () {
-    $superAdmin = circUser('superadmin_a', 'administrator');
+test('C18: a super admin may also approve a renewal', function () {
+    circUser('superadmin_a', 'administrator', 0, true);
     $loan = circActiveLoan($this->student);
+    $original = $loan->due_date;
+
+    $requestId = $this->withHeaders(circAs('Student', 'student_a'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->json('renewal_request.renewal_request_id');
 
     $this->withHeaders(circAs('Super Admin', 'superadmin_a'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
+        ->putJson("/api/library/renewals/{$requestId}/approve")
         ->assertStatus(200);
+
+    expect($loan->fresh()->due_date->gt($original))->toBeTrue();
 });
 
 test('C19: a closed transaction cannot be renewed', function () {
     $loan = circActiveLoan($this->student);
     $loan->update(['status' => 'returned']);
 
-    $this->withHeaders(circAs('Admin', 'admin_a'))
-        ->postJson('/api/library/loans/renew', ['transaction_id' => $loan->transaction_id])
-        ->assertStatus(422);
+    $this->withHeaders(circAs('Student', 'student_a'))
+        ->postJson('/api/library/renewals', ['transaction_id' => $loan->transaction_id])
+        ->assertStatus(422)
+        ->assertJsonPath('error', 'This loan has already been returned and cannot be renewed.');
 });
 
 /*

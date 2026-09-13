@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import api from '../../api';
+import useDialog from './useDialog';
 
 /**
  * Librarian fine settlement.
@@ -9,7 +10,7 @@ import api from '../../api';
  * Both simply reduce users.total_fines. Partial amounts are allowed and the
  * balance can never go below zero.
  */
-export default function AdminFinesPanel({ finesData, onSettled }) {
+export default function AdminFinesPanel({ finesData, onSettled, loading = false }) {
   const [target, setTarget] = useState(null); // { user, type }
   const [amount, setAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -34,6 +35,8 @@ export default function AdminFinesPanel({ finesData, onSettled }) {
     setAmount('');
     setError('');
   };
+
+  const settleDialogRef = useDialog(!!target, () => { if (!submitting) closeSettle(); });
 
   const submitSettlement = async () => {
     const value = parseFloat(amount);
@@ -83,8 +86,20 @@ export default function AdminFinesPanel({ finesData, onSettled }) {
         </div>
       )}
 
-      {debtors.length === 0 ? (
+      {loading ? (
+        <div className="flex flex-col gap-2.5">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div key={i} className="border border-slate-200/80 rounded-xl p-3.5 bg-white animate-pulse">
+              <div className="h-3 bg-slate-200 rounded w-1/3 mb-3"></div>
+              <div className="h-2.5 bg-slate-100 rounded w-1/4"></div>
+            </div>
+          ))}
+        </div>
+      ) : debtors.length === 0 ? (
         <div className="border border-slate-100 rounded-2xl py-10 px-6 flex flex-col items-center justify-center bg-slate-50/50 text-center">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-8 h-8 text-slate-300 mb-2" aria-hidden="true">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
           <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No outstanding fines.</h3>
           <p className="text-slate-400 text-[11px] font-medium">
             Fines appear here when an overdue book is checked in.
@@ -128,11 +143,19 @@ export default function AdminFinesPanel({ finesData, onSettled }) {
       )}
 
       {target && (
-        <div
-          onClick={(e) => { if (e.target === e.currentTarget) closeSettle(); }}
-          className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-[110]"
-        >
-          <div className="bg-white rounded-[1.5rem] p-6 shadow-2xl border border-slate-100 max-w-sm w-full">
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-[110]">
+          <div
+            className="absolute inset-0 bg-black/60 backdrop-blur-xs anim-fade-in"
+            onClick={() => { if (!submitting) closeSettle(); }}
+            aria-hidden="true"
+          />
+          <div
+            ref={settleDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="settle-dialog-title"
+            className="relative z-10 bg-white rounded-[1.5rem] p-6 shadow-2xl border border-slate-100 max-w-sm w-full anim-zoom-in"
+          >
             <span
               className={`inline-block text-[9px] font-black uppercase px-2.5 py-0.5 rounded tracking-wider mb-2 ${
                 target.type === 'paid'
@@ -143,7 +166,7 @@ export default function AdminFinesPanel({ finesData, onSettled }) {
               {target.type === 'paid' ? 'Record Payment' : 'Waive Fine'}
             </span>
 
-            <h2 className="text-[17px] font-black text-[#0f172a] leading-tight">{target.user.username}</h2>
+            <h2 id="settle-dialog-title" className="text-[17px] font-black text-[#0f172a] leading-tight">{target.user.username}</h2>
             <p className="text-slate-500 text-[11.5px] font-medium mt-1">
               Current balance <strong className="text-[#8B1A24]">{peso(target.user.total_fines)}</strong>
             </p>
