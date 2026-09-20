@@ -36,7 +36,12 @@ class BookController extends Controller
             $filters['include_archived'] = true;
         }
 
-        return response()->json($this->inventoryService->searchBooks($filters));
+        // `summary` is the active-library dashboard: archived titles and copies
+        // never count, even when a librarian's list includes archived titles.
+        return response()->json(array_merge(
+            $this->inventoryService->searchBooks($filters)->toArray(),
+            ['summary' => $this->inventoryService->activeSummary($filters)],
+        ));
     }
 
     /**
@@ -109,11 +114,16 @@ class BookController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(int $id)
+    public function show(Request $request, int $id)
     {
         $book = $this->inventoryService->getBookDetails($id);
-        
-        if (!$book) {
+
+        // An archived title is withdrawn from borrowers entirely — not just
+        // from the list. To a Student or Faculty member it does not exist.
+        $role = strtolower((string) $request->attributes->get('role', ''));
+        $isLibrarian = str_contains($role, 'admin');
+
+        if (! $book || ($book->isArchived() && ! $isLibrarian)) {
             return response()->json(['message' => 'Book not found'], 404);
         }
 

@@ -17,6 +17,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 uses(RefreshDatabase::class);
 
@@ -272,4 +273,242 @@ test('F14: settling unblocks checkout', function () {
     $this->withHeaders(finesAs('Admin', 'fine_admin'))
         ->postJson('/api/library/checkout', ['user_id' => $this->student->user_id, 'copy_id' => $copy->copy_id])
         ->assertStatus(201);
+});
+
+/*
+|--------------------------------------------------------------------------
+| F-1 / F-4: the BORROWER's role decides the rate, grace and cap
+|--------------------------------------------------------------------------
+|
+| A faculty loan used to be checked in at the student rate with no grace and
+| the student cap, so the borrower was charged something other than the
+| estimate their own screen had shown them.
+*/
+
+/** Apply fine policy settings as an admin. */
+function finesPolicy($test, array $settings): void
+{
+    $test->withHeaders(finesAs('Admin', 'fine_admin'))
+        ->putJson('/api/library/settings', ['settings' => $settings])
+        ->assertOk();
+}
+
+function finesCheckin($test, Transaction $loan)
+{
+    return $test->withHeaders(finesAs('Admin', 'fine_admin'))
+        ->postJson('/api/library/checkin', ['transaction_id' => $loan->transaction_id])
+        ->assertOk();
+}
+
+test('F15: a faculty loan is charged the faculty rate and grace, not the student one', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    $faculty = finesUser('fine_faculty', 'faculty');
+    $loan = finesLoan($faculty, -5); // five days overdue
+
+    finesCheckin($this, $loan);
+
+    // 5 days late, 3 forgiven, 2 chargeable at PHP 2.
+    expect((float) $faculty->fresh()->total_fines)->toBe(4.00);
+});
+
+test('F16: the student policy still applies to a student loan', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    $loan = finesLoan($this->student, -5);
+
+    finesCheckin($this, $loan);
+
+    expect((float) $this->student->fresh()->total_fines)->toBe(50.00);
+});
+
+test('F17: the faculty grace period can forgive the fine entirely', function () {
+    finesPolicy($this, ['faculty_fine_per_day' => 2, 'faculty_grace_days' => 3]);
+
+    $faculty = finesUser('fine_faculty2', 'faculty');
+    $loan = finesLoan($faculty, -2);
+
+    finesCheckin($this, $loan);
+
+    expect((float) $faculty->fresh()->total_fines)->toBe(0.00);
+});
+
+test('F18: the faculty cap limits a single faculty loan', function () {
+    finesPolicy($this, [
+        'faculty_fine_per_day' => 10, 'faculty_grace_days' => 0, 'faculty_max_fine' => 25,
+        'student_fine_per_day' => 10, 'student_max_fine' => 500,
+    ]);
+
+    $faculty = finesUser('fine_faculty3', 'faculty');
+    $loan = finesLoan($faculty, -10);
+
+    finesCheckin($this, $loan);
+
+    expect((float) $faculty->fresh()->total_fines)->toBe(25.00);
+});
+
+test('F19: the amount charged follows the borrower, whoever runs the desk', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    $faculty = finesUser('fine_faculty4', 'faculty');
+    $loan = finesLoan($faculty, -5);
+
+    // The desk operator here is an Admin, whose own policy would be the
+    // student one. The borrower's policy is what counts.
+    finesCheckin($this, $loan);
+
+    expect((float) $faculty->fresh()->total_fines)->toBe(4.00);
+
+    // NOTE: Transaction::estimated_fine still reads the student policy unless
+    // the `user` relation was eager-loaded (finding F-8, deliberately left
+    // out of this pass), so the borrowing screen can still quote 50.00 here.
+});
+
+test('F20: a recorded balance is not re-rated when the policy changes later', function () {
+    finesPolicy($this, ['faculty_fine_per_day' => 2, 'faculty_grace_days' => 0]);
+
+    $faculty = finesUser('fine_faculty5', 'faculty');
+    finesCheckin($this, finesLoan($faculty, -5));
+
+    expect((float) $faculty->fresh()->total_fines)->toBe(10.00);
+
+    finesPolicy($this, ['faculty_fine_per_day' => 99]);
+
+    expect((float) $faculty->fresh()->total_fines)->toBe(10.00);
+});
+
+test('F21: fines/me quotes each role its own configured rate', function () {
+    finesPolicy($this, ['student_fine_per_day' => 15, 'faculty_fine_per_day' => 7]);
+
+    $faculty = finesUser('fine_faculty6', 'faculty');
+
+    $rate = fn (array $headers) => $this->withHeaders($headers)
+        ->getJson('/api/library/fines/me')->assertOk()->json('daily_rate');
+
+    expect((float) $rate(finesAs('Student', 'fine_student')))->toBe(15.0)
+        ->and((float) $rate(finesAs('Faculty', 'fine_faculty6')))->toBe(7.0)
+        // A librarian is not a borrower category of its own; the default stands.
+        ->and((float) $rate(finesAs('Admin', 'fine_admin')))->toBe(15.0);
+});
+
+/*
+|--------------------------------------------------------------------------
+| F-8: the ESTIMATE a borrower is shown matches what they will be charged
+|--------------------------------------------------------------------------
+|
+| estimated_fine reads the borrower's policy from the `user` relation, and
+| falls back to the student policy when that relation was not eager-loaded.
+| The borrower-facing lists therefore have to load it.
+*/
+
+test('F22: a faculty borrower sees an estimate under the faculty rate, grace and cap', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    $faculty = finesUser('fine_est_faculty', 'faculty');
+    finesLoan($faculty, -5);
+
+    $loan = $this->withHeaders(finesAs('Faculty', 'fine_est_faculty'))
+        ->getJson('/api/library/loans/me')->assertOk()->json('0');
+
+    // 5 days late, 3 forgiven, 2 chargeable at PHP 2 — not 5 x PHP 10.
+    expect((float) $loan['estimated_fine'])->toBe(4.00)
+        ->and((int) $loan['days_overdue'])->toBe(2);
+});
+
+test('F23: the faculty cap also applies to the estimate', function () {
+    finesPolicy($this, [
+        'faculty_fine_per_day' => 10, 'faculty_grace_days' => 0, 'faculty_max_fine' => 25,
+    ]);
+
+    $faculty = finesUser('fine_est_capped', 'faculty');
+    finesLoan($faculty, -10);
+
+    expect((float) $this->withHeaders(finesAs('Faculty', 'fine_est_capped'))
+        ->getJson('/api/library/loans/me')->assertOk()->json('0.estimated_fine'))->toBe(25.00);
+});
+
+test('F24: a student estimate still follows the student policy', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    finesLoan($this->student, -5);
+
+    expect((float) $this->withHeaders(finesAs('Student', 'fine_student'))
+        ->getJson('/api/library/loans/me')->assertOk()->json('0.estimated_fine'))->toBe(50.00);
+});
+
+test('F25: the estimate shown before return equals the fine charged at check-in', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    $faculty = finesUser('fine_est_match', 'faculty');
+    $loan = finesLoan($faculty, -5);
+
+    $estimate = (float) $this->withHeaders(finesAs('Faculty', 'fine_est_match'))
+        ->getJson('/api/library/loans/me')->assertOk()->json('0.estimated_fine');
+
+    finesCheckin($this, $loan);
+
+    expect($estimate)->toBe(4.00)
+        ->and((float) $faculty->fresh()->total_fines)->toBe($estimate);
+});
+
+test('F26: the borrowing history carries the same borrower-correct estimate', function () {
+    finesPolicy($this, ['student_fine_per_day' => 10, 'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3]);
+
+    $faculty = finesUser('fine_est_history', 'faculty');
+    finesLoan($faculty, -5);
+
+    expect((float) $this->withHeaders(finesAs('Faculty', 'fine_est_history'))
+        ->getJson('/api/library/loans/me/history')->assertOk()->json('0.estimated_fine'))->toBe(4.00);
+});
+
+test('F27: the desk list estimates by the borrower, not by the librarian reading it', function () {
+    finesPolicy($this, [
+        'student_fine_per_day' => 10, 'student_grace_days' => 0,
+        'faculty_fine_per_day' => 2, 'faculty_grace_days' => 3,
+    ]);
+
+    $faculty = finesUser('fine_desk_faculty', 'faculty');
+    finesLoan($faculty, -5);
+    finesLoan($this->student, -5);
+
+    $rows = collect($this->withHeaders(finesAs('Admin', 'fine_admin'))
+        ->getJson('/api/library/circulation?status=active')->assertOk()->json())
+        ->keyBy(fn ($row) => $row['user']['username']);
+
+    expect((float) $rows['fine_desk_faculty']['estimated_fine'])->toBe(4.00)
+        ->and((float) $rows['fine_student']['estimated_fine'])->toBe(50.00);
+});
+
+test('F28: loading the borrower costs one query, not one per loan', function () {
+    foreach (range(1, 6) as $i) {
+        finesLoan($this->student, -2);
+    }
+
+    DB::flushQueryLog();
+    DB::enableQueryLog();
+    $this->withHeaders(finesAs('Student', 'fine_student'))->getJson('/api/library/loans/me')->assertOk();
+    $queries = count(DB::getQueryLog());
+    DB::disableQueryLog();
+
+    // Identity, the loans, and one eager load per relation — flat in the
+    // number of rows. (The desk list's separate N+1 is finding F-7.)
+    expect($queries)->toBeLessThanOrEqual(8);
 });

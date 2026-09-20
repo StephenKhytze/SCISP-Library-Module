@@ -48,10 +48,15 @@ class FinesController extends Controller
     {
         $user = User::find($request->attributes->get('user_id'));
 
+        // The rate this caller would actually be charged. A faculty borrower
+        // is quoted the faculty rate; an administrator keeps the default
+        // student rate, as before.
+        $role = app(\App\Services\CirculationService::class)->normalizeRole($user->role ?? 'student');
+
         return response()->json([
             'user_id' => $user?->user_id,
             'total_fines' => round((float) ($user->total_fines ?? 0), 2),
-            'daily_rate' => $this->finesCalculator->dailyRate(),
+            'daily_rate' => $this->finesCalculator->dailyRate($role),
         ]);
     }
 

@@ -102,6 +102,10 @@ export default function LibraryPortal() {
   const [categories, setCategories] = useState([]);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ current_page: 1, last_page: 1, total: 0 });
+  // Active-library dashboard totals from the backend (archived titles/copies excluded).
+  const [catalogSummary, setCatalogSummary] = useState(null);
+  // This account's own fine-per-day, from /library/fines/me.
+  const [myDailyRate, setMyDailyRate] = useState(null);
   const [debouncedSearch, setDebouncedSearch] = useState('');
 
   // Admin circulation list: active only, or full history.
@@ -159,8 +163,10 @@ export default function LibraryPortal() {
     location: b.physical_location,
     categories: b.category ? [b.category] : [],
     available: b.available_copies_count ?? 0,
-    total: b.total_copies ?? 0,
-    copies: b.copies || [],
+    // Copies still in the collection. books.total_copies also counts archived
+    // copies, so it would inflate "X of Y Available".
+    total: b.active_copies_count ?? b.total_copies ?? 0,
+    copies: (b.copies || []).filter(c => isLibrarian || c.is_archived !== true),
     edition: b.edition,
     publisher: b.publisher,
     publicationYear: b.publication_year,
@@ -189,6 +195,7 @@ export default function LibraryPortal() {
       const bookParams = { page, per_page: 12 };
       if (debouncedSearch) bookParams.search = debouncedSearch;
       if (selectedCategory) bookParams.category = selectedCategory;
+      if (isLibrarian) bookParams.include_archived = 1;
 
       // The summary tells us whether this account has a borrower side at all.
       const borrowerLikely = !isSuperAdminPersona;
@@ -196,6 +203,9 @@ export default function LibraryPortal() {
       const requests = [
         api.get('/library/books', { params: bookParams }),
         api.get('/library/me/summary'),
+        // The fine-per-day this account would actually be charged. Open to
+        // every signed-in user, so the rate shown is never a placeholder.
+        api.get('/library/fines/me'),
       ];
 
       // Captured now, not re-read after the await: two effects can be in
@@ -222,6 +232,7 @@ export default function LibraryPortal() {
       let cursor = 0;
       const booksRes = results[cursor++];
       const summaryRes = results[cursor++];
+      const myFinesRes = results[cursor++];
       const categoriesRes = requestedCategories ? results[cursor++] : null;
 
       const payload = booksRes.data || {};
@@ -233,6 +244,7 @@ export default function LibraryPortal() {
         last_page: payload.last_page ?? 1,
         total: payload.total ?? booksArray.length,
       });
+      setCatalogSummary(payload.summary ?? null);
 
       if (categoriesRes) {
         setCategories(categoriesRes.data || []);
@@ -240,6 +252,7 @@ export default function LibraryPortal() {
       }
 
       setSummary(summaryRes.data || null);
+      setMyDailyRate(myFinesRes.data?.daily_rate ?? null);
 
       if (borrowerLikely) {
         const myLoansRes = results[cursor++];
@@ -304,7 +317,7 @@ export default function LibraryPortal() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [isSuperAdminPersona, isStudent, page, debouncedSearch, selectedCategory]);
+  }, [isSuperAdminPersona, isStudent, page, debouncedSearch, selectedCategory, isLibrarian]);
 
   /**
    * Librarian datasets, loaded only for the desk screen actually being opened.
@@ -437,7 +450,8 @@ export default function LibraryPortal() {
 
   // Search and category filtering are performed by the API, so results cover the
   // whole catalog rather than only the books already loaded on this page.
-  const filteredBooks = books;
+  // The catalog view should strictly show only active titles, even for librarians.
+  const filteredBooks = books.filter(b => !b.isArchived);
 
   const [holdSearchQuery, setHoldSearchQuery] = useState('');
   const [holdBookFilter, setHoldBookFilter] = useState('');
@@ -648,7 +662,7 @@ export default function LibraryPortal() {
         location: b.physical_location,
         categories: b.category ? [b.category] : [],
         available: b.available_copies_count ?? parseInt(newBook.copies, 10),
-        total: b.total_copies ?? parseInt(newBook.copies, 10),
+        total: b.active_copies_count ?? b.total_copies ?? parseInt(newBook.copies, 10),
         image: null
       };
       setBooks([formatted, ...books]);
@@ -739,13 +753,24 @@ export default function LibraryPortal() {
   const borrowLimit = summary?.borrow_limit ?? null;
   const myBalance = summary?.total_fines ?? 0;
   const overdueCount = summary?.overdue_loans ?? 0;
-  const dailyRate = finesData?.daily_rate ?? 10;
+  // The borrower's own configured rate. The librarian fines panel carries the
+  // same number, but it only loads once that tab is opened, so it is the
+  // fallback rather than the source.
+  const dailyRate = myDailyRate ?? finesData?.daily_rate ?? 0;
 
   // Navigation badge counts. Every one of these is derived from loaded data;
   // none is a placeholder.
   //
   // The catalog badge is the whole catalog, not the current page.
-  const catalogCount = pagination.total ?? books.length;
+  // Dashboard cards and the catalog count describe the active library only:
+  // an archived title, or an archived copy, never counts, even in a
+  // librarian's list that includes them (the grid hides them too).
+  const activeTitleCount = catalogSummary?.active_titles ?? books.filter(b => !b.isArchived).length;
+  const catalogCount = activeTitleCount;
+  const activeAvailable = catalogSummary?.available_copies
+    ?? books.filter(b => !b.isArchived).reduce((acc, b) => acc + b.available, 0);
+  const activeCopies = catalogSummary?.active_copies
+    ?? books.filter(b => !b.isArchived).reduce((acc, b) => acc + b.total, 0);
 
   // Active loans at the desk. When the scope filter is showing history the
   // returned rows must not inflate the badge.
@@ -773,19 +798,10 @@ export default function LibraryPortal() {
 
   // Copies that are genuinely on loan. A copy held for pickup is not checked
   // out, and neither is one merely allocated to a course reserve.
-  const checkedOutCount = useMemo(() => {
-    const fromCopies = books.reduce((n, b) => {
-      const copies = b.copies || [];
-      if (copies.length === 0) return n;
-      return n + copies.filter(c => c.availability_status === 'checked_out').length;
-    }, 0);
-    return fromCopies;
-  }, [books]);
-
-  const onHoldCount = useMemo(
-    () => books.reduce((n, b) => n + (b.copies || []).filter(c => c.availability_status === 'on_hold').length, 0),
-    [books]
-  );
+  // System-wide, not the current page: the catalog is paginated, so copies on
+  // page 2 used to go uncounted. Both come from the backend summary.
+  const checkedOutCount = catalogSummary?.checked_out_copies ?? 0;
+  const onHoldCount = catalogSummary?.on_hold_copies ?? 0;
 
   // The role card must not claim "STUDENT / no limit" for an admin while the
   // summary is still in flight.
@@ -912,7 +928,7 @@ export default function LibraryPortal() {
                 </div>
                 <div>
                   <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Total Titles</div>
-                  <div className="text-xl font-extrabold text-[#0f172a]">{catalogCount}</div>
+                  <div className="text-xl font-extrabold text-[#0f172a]">{activeTitleCount}</div>
                 </div>
               </div>
 
@@ -926,7 +942,7 @@ export default function LibraryPortal() {
                 <div>
                   <div className="text-[10px] font-bold text-gray-400 tracking-wider uppercase">Available</div>
                   <div className="text-xl font-extrabold text-green-600">
-                    {books.reduce((acc, b) => acc + b.available, 0)} <span className="text-sm text-gray-400 font-bold">/ {books.reduce((acc, b) => acc + b.total, 0)}</span>
+                    {activeAvailable} <span className="text-sm text-gray-400 font-bold">/ {activeCopies}</span>
                   </div>
                 </div>
               </div>
@@ -1206,9 +1222,9 @@ export default function LibraryPortal() {
                       </div>
 
                       <div className="flex items-center justify-between border-t border-gray-100 pt-3">
-                        <div className="bg-green-50 text-green-700 border border-green-100 px-2.5 py-1 rounded-full flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 bg-green-500 rounded-full"></div>
-                          <span className="text-[10px] font-extrabold">{book.available} of {book.total} Copies Available</span>
+                        <div className="bg-[#ecfdf5] text-[#059669] border border-[#a7f3d0]/60 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-sm">
+                          <div className="w-1.5 h-1.5 bg-[#10b981] rounded-full shrink-0"></div>
+                          <span className="text-[10px] sm:text-[10.5px] font-extrabold">{book.available} of {book.total} Available</span>
                         </div>
                         <button
                           onClick={() => setSelectedBook(book)}
@@ -1230,7 +1246,7 @@ export default function LibraryPortal() {
               {pagination.last_page > 1 && (
                 <div className="bg-white rounded-[1.5rem] px-5 py-3.5 shadow-sm border border-gray-100 flex flex-col gap-2.5 items-center">
                   <span className="text-[11.5px] font-semibold text-slate-500">
-                    Page {pagination.current_page} of {pagination.last_page} · {pagination.total} titles
+                    Page {pagination.current_page} of {pagination.last_page} · {catalogCount} titles
                   </span>
                   <div className="flex items-center gap-2 w-full">
                     <button
@@ -1846,7 +1862,7 @@ export default function LibraryPortal() {
                   </div>
                   <div>
                     <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">TOTAL TITLES</div>
-                    <div className="text-[22px] font-black text-[#0f172a] leading-none mt-0.5">{catalogCount}</div>
+                    <div className="text-[22px] font-black text-[#0f172a] leading-none mt-0.5">{activeTitleCount}</div>
                   </div>
                 </div>
 
@@ -1860,7 +1876,7 @@ export default function LibraryPortal() {
                   <div>
                     <div className="text-[9px] font-extrabold text-slate-400 tracking-wider uppercase">AVAILABLE</div>
                     <div className="text-[22px] font-black text-emerald-600 leading-none mt-0.5">
-                      {books.reduce((acc, b) => acc + b.available, 0)} <span className="text-xs text-slate-400 font-bold">/ {books.reduce((acc, b) => acc + b.total, 0)}</span>
+                      {activeAvailable} <span className="text-xs text-slate-400 font-bold">/ {activeCopies}</span>
                     </div>
                   </div>
                 </div>
@@ -2176,10 +2192,10 @@ export default function LibraryPortal() {
                       </div>
 
                       <div className="flex items-center justify-between border-t border-slate-100 pt-2.5 mt-3">
-                        <div className="bg-[#ecfdf5] text-[#059669] border border-[#a7f3d0]/60 px-2.5 py-0.5 rounded-full flex items-center gap-1.5">
-                          <div className="w-1.5 h-1.5 bg-[#10b981] rounded-full"></div>
-                          <span className="text-[9.5px] font-extrabold">
-                            {book.available} of {book.total} Copies Available
+                        <div className="bg-[#ecfdf5] text-[#059669] border border-[#a7f3d0]/60 px-3 py-1.5 rounded-full flex items-center gap-1.5 shadow-sm">
+                          <div className="w-1.5 h-1.5 bg-[#10b981] rounded-full shrink-0"></div>
+                          <span className="text-[10px] sm:text-[10.5px] font-extrabold">
+                            {book.available} of {book.total} Available
                           </span>
                         </div>
 
@@ -2202,7 +2218,7 @@ export default function LibraryPortal() {
               {pagination.last_page > 1 && (
                 <div className="flex items-center justify-between gap-3 mt-4 bg-white rounded-[1.25rem] px-5 py-3 shadow-xs border border-slate-200/70">
                   <span className="text-[11.5px] font-semibold text-slate-500">
-                    Page {pagination.current_page} of {pagination.last_page} · {pagination.total} titles
+                    Page {pagination.current_page} of {pagination.last_page} · {catalogCount} titles
                   </span>
                   <div className="flex items-center gap-2">
                     <button
@@ -2828,19 +2844,40 @@ export default function LibraryPortal() {
                   available: 'Available on Shelf',
                   on_hold: 'Held for Pickup',
                   checked_out: 'Already Borrowed',
+                  damaged: 'Unavailable',
+                  lost: 'Unavailable',
                 };
 
                 return (
-                  <div key={copy.copy_id} className="border border-slate-200 rounded-xl p-2.5 flex items-center justify-between gap-2 bg-white shadow-2xs">
+                  <div key={copy.copy_id} className="border border-slate-200/80 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white shadow-xs">
                     <div className="min-w-0">
-                      <div className="font-mono text-[11px] font-extrabold text-[#0f172a]">{copy.accession_number || `CPY-${copy.copy_id}`}</div>
-                      <div className="text-[9px] text-slate-400 font-medium">Condition: {copy.condition}</div>
+                      <div className="font-mono text-[11.5px] font-extrabold text-[#0f172a]">{copy.accession_number || `CPY-${copy.copy_id}`}</div>
+                      <div className="text-[10px] text-slate-500 font-medium mt-1.5 flex items-center gap-1.5">
+                        <span className="text-[9px] font-extrabold uppercase tracking-wider text-slate-400">Cond:</span>
+                        {copy.condition === 'damaged' ? (
+                          <span className="inline-block bg-rose-50 text-rose-700 text-[9px] font-black uppercase px-1.5 py-0.5 rounded border border-rose-200">
+                            DAMAGED
+                          </span>
+                        ) : (
+                          <span className="capitalize text-slate-600 font-semibold">{copy.condition}</span>
+                        )}
+                      </div>
                     </div>
-                    <StatusBadge
-                      status={copy.availability_status === 'on_hold' ? 'on hold' : copy.availability_status}
-                      label={labels[copy.availability_status]}
-                      className="shrink-0"
-                    />
+                    <div className="flex justify-start sm:justify-end shrink-0 sm:w-40">
+                      {/* An archived copy, or a shelf copy set aside for a course
+                          reserve, is not general stock — never "Available on Shelf". */}
+                      {copy.is_archived ? (
+                        <StatusBadge status="archived" label="Archived" className="w-full sm:w-auto" />
+                      ) : copy.availability_status === 'available' && copy.reserve_id ? (
+                        <StatusBadge status="course reserved" label="On Course Reserve" className="w-full sm:w-auto" />
+                      ) : (
+                        <StatusBadge
+                          status={copy.availability_status === 'on_hold' ? 'on hold' : copy.availability_status}
+                          label={labels[copy.availability_status]}
+                          className="w-full sm:w-auto"
+                        />
+                      )}
+                    </div>
                   </div>
                 );
               })}

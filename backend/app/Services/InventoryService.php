@@ -4,6 +4,8 @@ namespace App\Services;
 
 use App\Models\Book;
 use App\Models\BookCopy;
+use App\Models\Hold;
+use App\Models\Transaction;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 
@@ -19,15 +21,35 @@ class InventoryService
     public static function generalAvailabilityCounts(): array
     {
         return [
+            // Borrowable from general stock right now: in the collection,
+            // free, and not set aside for a course reserve.
             'copies as available_copies_count' => function ($q) {
-                $q->where('availability_status', 'available')->whereNull('reserve_id');
+                self::whereGenerallyAvailable($q);
             },
             // Surfaced separately so the catalog can explain the difference
             // between "we own 5" and "5 you can borrow".
             'copies as reserved_copies_count' => function ($q) {
-                $q->whereNotNull('reserve_id');
+                $q->active()->whereNotNull('reserve_id');
+            },
+            // Copies still in the collection. books.total_copies stays the
+            // number of physical copies ever registered, archived included.
+            'copies as active_copies_count' => function ($q) {
+                $q->active();
             },
         ];
+    }
+
+    /**
+     * The one definition of "borrowable from general stock right now": in the
+     * collection, on the shelf and free, not damaged, and not set aside for a
+     * course reserve. Lost, checked-out and on-hold copies fail the status test.
+     */
+    public static function whereGenerallyAvailable($q)
+    {
+        return $q->active()
+            ->where('availability_status', 'available')
+            ->where('condition', '!=', 'damaged')
+            ->whereNull('reserve_id');
     }
 
     /**
@@ -35,13 +57,55 @@ class InventoryService
      */
     public function searchBooks(array $filters = []): LengthAwarePaginator
     {
-        $query = Book::query();
+        $query = $this->filteredQuery($filters);
 
         // Archived titles are hidden from borrowers. A librarian passing
         // include_archived=1 sees them; nobody else can.
         if (empty($filters['include_archived'])) {
             $query->notArchived();
         }
+
+        // Compute live availability using subquery and eager-load copies
+        $query->with(['copies'])->withCount(self::generalAvailabilityCounts());
+
+        $perPage = (int) ($filters['per_page'] ?? 15);
+        $perPage = max(1, min($perPage, 100));
+
+        return $query->orderBy('book_title')->paginate($perPage);
+    }
+
+    /**
+     * Active-library totals for the dashboard, over every matching title (not
+     * just the current page).
+     *
+     * Archived titles never count, even when a librarian's list includes them,
+     * and neither do archived copies: the denominator is copies still in the
+     * collection under a title still in the catalog.
+     */
+    public function activeSummary(array $filters = []): array
+    {
+        $bookIds = $this->filteredQuery($filters)->notArchived()->select('book_id');
+
+        // Every active title, ignoring the catalog search. The two operational
+        // counts below are desk totals — "how many copies are out right now" —
+        // so they must not shrink because a librarian typed in the search box.
+        $allActiveIds = Book::query()->notArchived()->select('book_id');
+
+        return [
+            'active_titles' => (clone $bookIds)->count(),
+            'active_copies' => BookCopy::active()->whereIn('book_id', $bookIds)->count(),
+            'available_copies' => self::whereGenerallyAvailable(BookCopy::query())->whereIn('book_id', $bookIds)->count(),
+            'checked_out_copies' => BookCopy::active()->whereIn('book_id', $allActiveIds)
+                ->where('availability_status', 'checked_out')->count(),
+            'on_hold_copies' => BookCopy::active()->whereIn('book_id', $allActiveIds)
+                ->where('availability_status', 'on_hold')->count(),
+        ];
+    }
+
+    /** The catalog search and filters, with no archive or count handling. */
+    protected function filteredQuery(array $filters)
+    {
+        $query = Book::query();
 
         // Single-box search across the fields a borrower would type, plus the
         // accession number a librarian reads off a shelf.
@@ -93,13 +157,7 @@ class InventoryService
             $query->where('isbn', $filters['isbn']);
         }
 
-        // Compute live availability using subquery and eager-load copies
-        $query->with(['copies'])->withCount(self::generalAvailabilityCounts());
-
-        $perPage = (int) ($filters['per_page'] ?? 15);
-        $perPage = max(1, min($perPage, 100));
-
-        return $query->orderBy('book_title')->paginate($perPage);
+        return $query;
     }
 
     /**
@@ -247,29 +305,72 @@ class InventoryService
      */
     public function updateCopyStatus(int $copyId, array $data, ?int $actorId = null): BookCopy
     {
-        $copy = BookCopy::findOrFail($copyId);
+        return DB::transaction(function () use ($copyId, $data) {
+            // Locked, so a checkout or hold landing at the same moment cannot
+            // slip between the checks below and the write.
+            $copy = BookCopy::where('copy_id', $copyId)->lockForUpdate()->firstOrFail();
 
-        $newStatus = $data['availability_status'] ?? $copy->availability_status;
+            $requestedStatus = $data['availability_status'] ?? null;
+            $newCondition = $data['condition'] ?? $copy->condition;
 
-        // A copy that is still on loan must not be hand-flipped back to available;
-        // it returns to circulation through check-in, which also settles any fine.
-        if ($newStatus === 'available' && $copy->availability_status !== 'available') {
-            $hasActiveLoan = \App\Models\Transaction::where('copy_id', $copyId)
-                ->where('status', 'active')
-                ->exists();
-
-            if ($hasActiveLoan) {
-                throw new \Exception('This copy has an active loan. Check it in instead of marking it available.');
+            // checked_out and on_hold belong to circulation and the hold queue.
+            // The controller already rejects them; this is the last line.
+            if ($requestedStatus !== null && ! in_array($requestedStatus, BookCopy::MANUAL_STATUSES, true)) {
+                throw new \Exception(
+                    "A copy cannot be set to \"{$requestedStatus}\" by hand. That status is managed by checkout and the hold queue."
+                );
             }
+
+            // D-1: a damaged book is not borrowable. The condition drives the
+            // availability; the reverse is deliberately NOT automatic — moving
+            // condition away from damaged leaves availability where it is, so
+            // a repaired copy only returns to circulation when a librarian
+            // explicitly makes it available.
+            $newStatus = $newCondition === 'damaged'
+                ? 'damaged'
+                : ($requestedStatus ?? $copy->availability_status);
+
+            // While the copy is on loan, or set aside for someone to collect,
+            // its availability belongs to that circulation action. Refuse any
+            // change to it rather than invent a workflow for it.
+            if ($newStatus !== $copy->availability_status) {
+                $this->assertNotInCirculation($copy);
+            }
+
+            $copy->update([
+                'condition' => $newCondition,
+                'availability_status' => $newStatus,
+            ]);
+
+            return $copy;
+        });
+    }
+
+    /**
+     * Refuse when a live loan or a copy-owning hold would be contradicted.
+     *
+     * @throws \Exception with a sentence the librarian can act on
+     */
+    protected function assertNotInCirculation(BookCopy $copy): void
+    {
+        $onLoan = Transaction::where('copy_id', $copy->copy_id)
+            ->where('status', 'active')
+            ->exists();
+
+        if ($onLoan) {
+            throw new \Exception(
+                'This copy is on loan. Check it in first, then update its status.'
+            );
         }
 
-        // The copy carries its CURRENT condition only. The historical trail
-        // was removed deliberately; nothing records what it used to be.
-        $copy->update([
-            'condition' => $data['condition'] ?? $copy->condition,
-            'availability_status' => $newStatus,
-        ]);
+        $heldFor = Hold::where('copy_id', $copy->copy_id)
+            ->whereIn('status', ['pending_approval', 'fulfilled'])
+            ->exists();
 
-        return $copy;
+        if ($heldFor) {
+            throw new \Exception(
+                'This copy is set aside for a borrower. Release or check out that hold first, then update its status.'
+            );
+        }
     }
 }

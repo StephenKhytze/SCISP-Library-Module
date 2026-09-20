@@ -3,7 +3,10 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BookCopy;
 use App\Models\CourseReserve;
+use App\Services\ReserveLifecycleService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Http\Request;
 
 class ReserveController extends Controller
@@ -55,7 +58,7 @@ class ReserveController extends Controller
         return response()->json($reserve, 201);
     }
 
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, $id, ReserveLifecycleService $lifecycle)
     {
         $reserve = CourseReserve::findOrFail($id);
         $validated = $request->validate([
@@ -81,16 +84,20 @@ class ReserveController extends Controller
             }
         }
 
-        $reserve->status = $validated['status'];
-        if (isset($validated['admin_to_teacher_note'])) {
-            $reserve->admin_to_teacher_note = $validated['admin_to_teacher_note'];
+        // The state machine, and the atomic clean-up of holds and copies when
+        // a reserve ends, live in ReserveLifecycleService.
+        try {
+            $reserve = $lifecycle->transition(
+                $reserve->reserve_id,
+                $validated['status'],
+                $validated['admin_to_teacher_note'] ?? null
+            );
+        } catch (\DomainException $e) {
+            return response()->json([
+                'message' => 'Could not update this course reserve.',
+                'error' => $e->getMessage(),
+            ], 422);
         }
-        
-        if ($validated['status'] === 'released') {
-            \App\Models\BookCopy::where('reserve_id', $reserve->reserve_id)->update(['reserve_id' => null]);
-        }
-
-        $reserve->save();
 
         return response()->json($reserve);
     }
@@ -138,7 +145,7 @@ class ReserveController extends Controller
         }
     }
 
-    public function allocateCopies(Request $request, $id)
+    public function allocateCopies(Request $request, $id, ReserveLifecycleService $lifecycle)
     {
         $reserve = CourseReserve::findOrFail($id);
 
@@ -147,57 +154,92 @@ class ReserveController extends Controller
             'copy_ids.*' => 'integer|exists:book_copies,copy_id',
         ]);
 
-        if ($reserve->status !== 'approved') {
+        try {
+            // One transaction, with the reserve and the candidate copies
+            // locked, so two librarians cannot allocate the same copy twice or
+            // race the general-queue check below.
+            $copies = DB::transaction(function () use ($reserve, $validated, $lifecycle) {
+                $reserve = CourseReserve::where('reserve_id', $reserve->reserve_id)->lockForUpdate()->firstOrFail();
+
+                if ($reserve->status !== 'approved') {
+                    throw new \DomainException('Only an approved reserve can receive copies.');
+                }
+
+                if (empty($validated['copy_ids'])) {
+                    // No explicit selection: take free copies of this reserve's
+                    // book, up to however many are still outstanding.
+                    $alreadyAllocated = BookCopy::active()->where('reserve_id', $reserve->reserve_id)->count();
+                    $remaining = max(0, (int) $reserve->copies_requested - $alreadyAllocated);
+
+                    if ($remaining === 0) {
+                        throw new \DomainException('This reserve already has all the copies it requested.');
+                    }
+
+                    $copies = BookCopy::active()
+                        ->where('book_id', $reserve->book_id)
+                        ->whereNull('reserve_id')
+                        ->where('availability_status', 'available')
+                        ->where('condition', '!=', 'damaged')
+                        ->limit($remaining)
+                        ->lockForUpdate()
+                        ->get();
+
+                    if ($copies->isEmpty()) {
+                        throw new \DomainException('No available copies of this title to allocate.');
+                    }
+                } else {
+                    // Explicit selection. Every copy must be this title's, in
+                    // the collection, on the shelf, and not already serving
+                    // another live reserve. A copy already allocated to THIS
+                    // reserve is a no-op, so re-submitting is harmless.
+                    $copies = BookCopy::whereIn('copy_id', $validated['copy_ids'])->lockForUpdate()->get();
+
+                    $liveReserveIds = CourseReserve::whereIn('status', ReserveLifecycleService::LIVE_STATUSES)
+                        ->pluck('reserve_id')
+                        ->flip();
+
+                    $problems = [];
+
+                    foreach ($copies as $copy) {
+                        if ((int) $copy->reserve_id === (int) $reserve->reserve_id) {
+                            continue;
+                        }
+
+                        if ((int) $copy->book_id !== (int) $reserve->book_id) {
+                            $problems[] = "{$copy->label} is a copy of a different title.";
+                        } elseif ($copy->isArchived()) {
+                            $problems[] = "{$copy->label} is archived.";
+                        } elseif ($copy->availability_status !== 'available' || $copy->condition === 'damaged') {
+                            $state = $copy->condition === 'damaged' ? 'damaged' : str_replace('_', ' ', $copy->availability_status);
+                            $problems[] = "{$copy->label} is {$state}.";
+                        } elseif ($copy->reserve_id !== null && $liveReserveIds->has($copy->reserve_id)) {
+                            $problems[] = "{$copy->label} is already allocated to another course reserve.";
+                        }
+                    }
+
+                    if (! empty($problems)) {
+                        throw new \DomainException('Only available copies of this title can be allocated. '.implode(' ', $problems));
+                    }
+                }
+
+                // M-2: never take the last copy the general waitlist could get.
+                if ($lifecycle->wouldStarveGeneralQueue((int) $reserve->book_id, $copies)) {
+                    throw new \DomainException(
+                        'Cannot allocate the last usable general copy while borrowers are waiting in the general queue.'
+                    );
+                }
+
+                BookCopy::whereIn('copy_id', $copies->pluck('copy_id'))
+                    ->update(['reserve_id' => $reserve->reserve_id]);
+
+                return $copies;
+            });
+        } catch (\DomainException $e) {
             return response()->json([
                 'message' => 'Could not allocate copies.',
-                'error' => 'Only an approved reserve can receive copies.',
+                'error' => $e->getMessage(),
             ], 422);
         }
-
-        // No explicit selection: take free copies of this reserve's book, up to
-        // however many are still outstanding against copies_requested.
-        if (empty($validated['copy_ids'])) {
-            $alreadyAllocated = \App\Models\BookCopy::where('reserve_id', $reserve->reserve_id)->count();
-            $remaining = max(0, (int) $reserve->copies_requested - $alreadyAllocated);
-
-            if ($remaining === 0) {
-                return response()->json([
-                    'message' => 'Could not allocate copies.',
-                    'error' => 'This reserve already has all the copies it requested.',
-                ], 422);
-            }
-
-            $copies = \App\Models\BookCopy::where('book_id', $reserve->book_id)
-                ->whereNull('reserve_id')
-                ->where('availability_status', 'available')
-                ->limit($remaining)
-                ->get();
-
-            if ($copies->isEmpty()) {
-                return response()->json([
-                    'message' => 'Could not allocate copies.',
-                    'error' => 'No available copies of this title to allocate.',
-                ], 422);
-            }
-        } else {
-            // Explicit selection must belong to this reserve's book and be free.
-            $copies = \App\Models\BookCopy::whereIn('copy_id', $validated['copy_ids'])
-                ->where('book_id', $reserve->book_id)
-                ->where(function ($q) use ($reserve) {
-                    $q->whereNull('reserve_id')->orWhere('reserve_id', $reserve->reserve_id);
-                })
-                ->get();
-
-            if ($copies->count() !== count($validated['copy_ids'])) {
-                return response()->json([
-                    'message' => 'Could not allocate copies.',
-                    'error' => 'One or more copies do not belong to this title or are already reserved elsewhere.',
-                ], 422);
-            }
-        }
-
-        \App\Models\BookCopy::whereIn('copy_id', $copies->pluck('copy_id'))
-            ->update(['reserve_id' => $reserve->reserve_id]);
 
         return response()->json([
             'message' => 'Allocated '.$copies->count().' cop'.($copies->count() === 1 ? 'y' : 'ies').' to this reserve.',

@@ -82,7 +82,10 @@ class CirculationController extends Controller
     {
         $userId = $request->attributes->get('user_id');
 
-        $loans = Transaction::with(['bookCopy.book', 'latestRenewalRequest'])
+        // `user` is loaded because estimated_fine reads the BORROWER's policy
+        // from it — rate, grace and cap. Without it the estimate silently falls
+        // back to the student policy and stops matching what check-in charges.
+        $loans = Transaction::with(['bookCopy.book', 'latestRenewalRequest', 'user'])
             ->where('user_id', $userId)
             ->where('status', 'active')
             ->orderByDesc('transaction_id')
@@ -99,7 +102,8 @@ class CirculationController extends Controller
     {
         $userId = $request->attributes->get('user_id');
 
-        $history = Transaction::with(['bookCopy.book', 'latestRenewalRequest'])
+        // Same reason as myLoans: the estimate needs the borrower's policy.
+        $history = Transaction::with(['bookCopy.book', 'latestRenewalRequest', 'user'])
             ->where('user_id', $userId)
             ->orderByDesc('transaction_id')
             ->get();

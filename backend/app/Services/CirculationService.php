@@ -108,6 +108,19 @@ class CirculationService
                 throw new Exception('This title has been archived and is no longer available for borrowing.');
             }
 
+            // An archived copy has left the collection even if its status
+            // still reads "available" — archive is kept apart from status.
+            if ($copy->isArchived()) {
+                throw new Exception("Copy {$copy->label} has been archived and is no longer in circulation.");
+            }
+
+            // Belt and braces for D-1: a damaged condition always means a
+            // damaged status, but never lend a damaged book even if a row
+            // somehow disagrees.
+            if ($copy->condition === 'damaged') {
+                throw new Exception("Copy {$copy->label} is damaged and cannot be borrowed.");
+            }
+
             // Management-only accounts are not borrowers. This has to be read
             // from the borrower's record: on checkout the borrower arrives as a
             // user_id and sends no role header of their own.
@@ -197,30 +210,48 @@ class CirculationService
                 'status' => 'active',
             ]);
 
-            // Clear any pending or fulfilled hold this borrower had for the copy
-            // they just received. Scoped to the same pool the copy came from, so
-            // checking out a reserve copy never silently cancels the borrower's
-            // separate general-circulation hold for the same title.
-            $existingHold = \App\Models\Hold::where('book_id', $copy->book_id)
+            // Resolve the hold this borrower had for what they just received.
+            //
+            // First by copy_id: the hold that owns THIS copy is the one being
+            // satisfied. Matching on the copy rather than on the pool matters
+            // because the copy's reserve_id can change while it waits on the
+            // shelf, and a pool lookup would then miss it and leave a phantom
+            // Ready for Pickup behind.
+            $existingHold = \App\Models\Hold::where('copy_id', $copy->copy_id)
                 ->where('user_id', $user->user_id)
-                ->whereIn('status', ['pending', 'fulfilled'])
-                ->when($copy->reserve_id, fn ($q) => $q->where('reserve_id', $copy->reserve_id))
-                ->when(! $copy->reserve_id, fn ($q) => $q->whereNull('reserve_id'))
+                ->whereIn('status', ['pending_approval', 'fulfilled'])
+                ->lockForUpdate()
                 ->first();
 
+            // Otherwise by pool: a hold for the same title in the same pool the
+            // copy came from, so checking out a reserve copy never silently
+            // cancels the borrower's separate general-circulation hold.
+            if (! $existingHold) {
+                $existingHold = \App\Models\Hold::where('book_id', $copy->book_id)
+                    ->where('user_id', $user->user_id)
+                    ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
+                    ->when($copy->reserve_id, fn ($q) => $q->where('reserve_id', $copy->reserve_id))
+                    ->when(! $copy->reserve_id, fn ($q) => $q->whereNull('reserve_id'))
+                    ->lockForUpdate()
+                    ->first();
+            }
+
             if ($existingHold) {
-                if ($existingHold->status === 'fulfilled' && $existingHold->copy_id && $existingHold->copy_id !== $copy->copy_id) {
-                    // Admin checked out a different physical copy. 
-                    // Release the originally held copy to the waitlist.
-                    $wasHoldFulfilled = $this->holdService->advanceQueue($existingHold->book_id, $existingHold->copy_id);
-                    if (!$wasHoldFulfilled) {
-                        $oldCopy = BookCopy::find($existingHold->copy_id);
-                        if ($oldCopy) {
-                            $oldCopy->update(['availability_status' => 'available']);
-                        }
-                    }
-                }
+                $heldOtherCopy = in_array($existingHold->status, ['pending_approval', 'fulfilled'], true)
+                    && $existingHold->copy_id
+                    && (int) $existingHold->copy_id !== (int) $copy->copy_id;
+
+                $otherCopyId = $heldOtherCopy ? (int) $existingHold->copy_id : null;
+
                 $existingHold->delete();
+
+                // Admin checked out a different physical copy than the one set
+                // aside. Release that one: to the next waiting borrower in its
+                // own pool if there is one, back on the shelf otherwise — never
+                // making a damaged or lost copy available.
+                if ($otherCopyId) {
+                    $this->holdService->freeCopy($otherCopyId);
+                }
             }
 
             return $transaction;
@@ -249,9 +280,18 @@ class CirculationService
             }
 
             $returnDate = now();
-            
-            // Calculate fine if overdue
-            $fine = $this->finesCalculator->calculateFine($transaction->due_date, $returnDate);
+
+            // The fine follows the BORROWER's policy — rate, grace and cap —
+            // not the student default, and not the librarian running the desk.
+            // This is the same role the borrowing screen's estimate uses, so
+            // what a borrower was shown is what they are charged.
+            $borrower = User::find($transaction->user_id);
+
+            $fine = $this->finesCalculator->calculateFine(
+                $transaction->due_date,
+                $returnDate,
+                $this->normalizeRole($borrower->role ?? 'student')
+            );
 
             if ($fine > 0) {
                 // Lock the user to apply fine safely. users.total_fines is the
@@ -264,27 +304,42 @@ class CirculationService
             $transaction->actual_return_date = $returnDate;
             $transaction->save();
 
-            $transaction->load('bookCopy');
-            $isReserved = $transaction->bookCopy && $transaction->bookCopy->reserve_id !== null;
+            $copy = BookCopy::where('copy_id', $transaction->copy_id)->lockForUpdate()->firstOrFail();
 
-            // Mark the copy as available again, OR fulfill a hold if someone is waiting.
-            // A reserve copy advances its own reserve's queue; a general copy
-            // advances the title's general waitlist. The two never cross.
-            $wasHoldFulfilled = false;
+            // The loan is closed above no matter what. What happens to the
+            // copy depends on whether it can serve anyone:
+            //
+            //  - damaged or lost (by status), or damaged (by condition):
+            //    it keeps that status and is NOT handed to the next borrower.
+            //    The queue stays pending until a usable copy comes back.
+            //  - archived: it is no longer in circulation; release it from
+            //    checked_out but do not promote anyone onto it.
+            //  - otherwise: it returns to the shelf, and if someone is waiting
+            //    in the same pool it goes straight to them (unchanged flow).
+            if ($copy->condition === 'damaged') {
+                $copy->update(['availability_status' => 'damaged']);
 
-            if ($isReserved) {
-                $wasHoldFulfilled = $this->holdService->advanceReserveQueue(
-                    (int) $transaction->bookCopy->reserve_id,
-                    $transaction->copy_id
-                );
-            } else {
-                $wasHoldFulfilled = $this->holdService->advanceQueue($transaction->bookCopy->book_id, $transaction->copy_id);
+                return $transaction;
             }
 
-            if (!$wasHoldFulfilled) {
-                // Only make it available if no one was in the hold queue
-                $copy = BookCopy::findOrFail($transaction->copy_id);
-                $copy->update(['availability_status' => 'available']);
+            if (in_array($copy->availability_status, BookCopy::UNUSABLE_STATUSES, true)) {
+                return $transaction;
+            }
+
+            // Back on the shelf first, so the copy is never promoted while it
+            // still reads checked_out.
+            $copy->update(['availability_status' => 'available']);
+
+            if ($copy->isArchived()) {
+                return $transaction;
+            }
+
+            // A reserve copy advances its own reserve's queue; a general copy
+            // advances the title's general waitlist. The two never cross.
+            if ($copy->reserve_id !== null) {
+                $this->holdService->advanceReserveQueue((int) $copy->reserve_id, $copy->copy_id);
+            } else {
+                $this->holdService->advanceQueue($copy->book_id, $copy->copy_id);
             }
 
             return $transaction;

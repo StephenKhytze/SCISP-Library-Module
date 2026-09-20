@@ -58,7 +58,8 @@ class HoldService
 
             // General stock only — a course-reserved copy is set aside for a
             // section and is not part of the pool this queue draws from.
-            $availableCopy = BookCopy::where('book_id', $bookId)
+            $availableCopy = BookCopy::active()
+                ->where('book_id', $bookId)
                 ->where('availability_status', 'available')
                 ->whereNull('reserve_id')
                 ->lockForUpdate()
@@ -147,7 +148,7 @@ class HoldService
             }
 
             // Already holding one of this reserve's copies on loan.
-            $allocatedCopyIds = BookCopy::where('reserve_id', $reserveId)->pluck('copy_id');
+            $allocatedCopyIds = BookCopy::active()->where('reserve_id', $reserveId)->pluck('copy_id');
 
             if ($allocatedCopyIds->isEmpty()) {
                 throw new Exception('No physical copies have been allocated to this course reserve yet.');
@@ -163,7 +164,8 @@ class HoldService
             }
 
             // Only this reserve's own copies, and only ones physically free.
-            $freeCopy = BookCopy::where('reserve_id', $reserveId)
+            $freeCopy = BookCopy::active()
+                ->where('reserve_id', $reserveId)
                 ->where('availability_status', 'available')
                 ->lockForUpdate()
                 ->first();
@@ -232,32 +234,70 @@ class HoldService
      */
     public function advanceReserveQueue(int $reserveId, int $copyId): bool
     {
-        $nextHold = Hold::where('reserve_id', $reserveId)
-            ->where('status', 'pending')
-            ->orderBy('queue_position', 'asc')
-            ->lockForUpdate()
-            ->first();
+        // Only a live reserve hands out its copies. A released or denied
+        // reserve has no queue left to serve.
+        $reserve = CourseReserve::where('reserve_id', $reserveId)->lockForUpdate()->first();
 
-        if (! $nextHold) {
+        if (! $reserve || $reserve->status !== 'approved') {
             return false;
         }
 
-        // A reserve is already approved, so its queue promotes straight to
-        // Ready for Pickup — the same state a direct reserve request produces.
-        // General holds keep their existing "Getting Approval" step.
-        return $this->promote($nextHold, $copyId, 'fulfilled');
+        while (true) {
+            $nextHold = Hold::where('reserve_id', $reserveId)
+                ->where('status', 'pending')
+                ->orderBy('queue_position', 'asc')
+                ->orderBy('hold_id', 'asc')
+                ->lockForUpdate()
+                ->first();
+
+            if (! $nextHold) {
+                return false;
+            }
+
+            // A reserve copy is for the section. Someone who has since left the
+            // section is no longer eligible; drop them from the queue rather
+            // than hand them a copy checkout would refuse, and try the next.
+            $stillEnrolled = CourseSectionStudent::where('section_id', $reserve->section_id)
+                ->where('student_id', $nextHold->user_id)
+                ->exists();
+
+            if (! $stillEnrolled) {
+                $nextHold->update(['status' => 'cancelled']);
+                $this->resequence($nextHold->book_id, $reserveId);
+
+                continue;
+            }
+
+            // A reserve is already approved, so its queue promotes straight to
+            // Ready for Pickup — the same state a direct reserve request produces.
+            // General holds keep their existing "Getting Approval" step.
+            return $this->promote($nextHold, $copyId, 'fulfilled');
+        }
     }
 
-    /** Give a waiting borrower the copy that just came back. */
+    /**
+     * Give a waiting borrower the copy that just came back.
+     *
+     * Refuses — returning false, touching nothing — unless the copy can
+     * genuinely serve this borrower: in the collection, not damaged or lost,
+     * free (or freshly released from a hold), and in the same pool as the
+     * hold. Every caller already treats false as "nobody was promoted", so a
+     * refused copy is simply not handed out and the borrower keeps waiting.
+     */
     protected function promote(Hold $hold, int $copyId, string $status = 'pending_approval'): bool
     {
+        $copy = BookCopy::where('copy_id', $copyId)->lockForUpdate()->first();
+
+        if (! $copy || ! $this->canServe($copy, $hold)) {
+            return false;
+        }
+
         $hold->update([
             'status' => $status,
             'queue_position' => 0,
             'copy_id' => $copyId,
         ]);
 
-        $copy = BookCopy::where('copy_id', $copyId)->lockForUpdate()->first();
         $copy->update(['availability_status' => 'on_hold']);
 
         // Note: In a real system, you'd trigger a notification/email here.
@@ -265,6 +305,31 @@ class HoldService
         $this->resequence($hold->book_id, $hold->reserve_id);
 
         return true;
+    }
+
+    /**
+     * May this copy be handed to this hold?
+     *
+     * `on_hold` is accepted because two callers promote a copy that is being
+     * released from someone else's hold (cancellation, and checkout of a
+     * different copy). `checked_out` is not: check-in puts the copy back on
+     * the shelf before promoting.
+     */
+    protected function canServe(BookCopy $copy, Hold $hold): bool
+    {
+        if (! $copy->isUsable()) {
+            return false; // archived, lost, or damaged by status or condition
+        }
+
+        if (! in_array($copy->availability_status, ['available', 'on_hold'], true)) {
+            return false;
+        }
+
+        // Pools never cross: general holds take general stock only, a reserve
+        // queue takes only its own reserve's copies.
+        return $hold->reserve_id === null
+            ? $copy->reserve_id === null
+            : (int) $copy->reserve_id === (int) $hold->reserve_id;
     }
 
     /**
@@ -303,7 +368,9 @@ class HoldService
     public function cancelHold(int $holdId, int $userId, bool $isAdmin = false): Hold
     {
         return DB::transaction(function () use ($holdId, $userId, $isAdmin) {
-            $hold = Hold::findOrFail($holdId);
+            // Locked, so two cancellations (or a cancel racing a promotion)
+            // cannot both free the same copy.
+            $hold = Hold::where('hold_id', $holdId)->lockForUpdate()->firstOrFail();
 
             if (!$isAdmin && $hold->user_id !== $userId) {
                 throw new Exception("You are not authorized to cancel this hold.");
@@ -313,35 +380,74 @@ class HoldService
                 throw new Exception("Only pending, pending_approval, or fulfilled holds can be cancelled.");
             }
 
-            $wasFulfilled = in_array($hold->status, ['fulfilled', 'pending_approval']);
-            $copyId = $hold->copy_id;
-            $bookId = $hold->book_id;
-            $reserveId = $hold->reserve_id;
-
-            $hold->update(['status' => 'cancelled']);
-
-            if ($wasFulfilled && $copyId) {
-                // The copy is now freed up. See if anyone else in the SAME pool
-                // is waiting for it.
-                $wasHoldFulfilled = $reserveId
-                    ? $this->advanceReserveQueue($reserveId, $copyId)
-                    : $this->advanceQueue($bookId, $copyId);
-
-                if (!$wasHoldFulfilled) {
-                    // No one else is waiting, make it available again. This is also how a
-                    // librarian frees a copy stuck behind an abandoned hold.
-                    $copy = BookCopy::find($copyId);
-
-                    if ($copy && $copy->availability_status === 'on_hold') {
-                        $copy->update(['availability_status' => 'available']);
-                    }
-                }
-            }
-
-            // Close any gap this cancellation left in the waitlist.
-            $this->resequence($bookId, $reserveId);
+            $this->cancelAndFree($hold);
 
             return $hold;
         });
+    }
+
+    /**
+     * Cancel one live hold and deal with any copy it was holding.
+     *
+     * The single path for every way a hold ends early — a borrower or
+     * librarian cancelling, a reserve being released or denied, a student
+     * being removed from a section — so each leaves the copy and the queue in
+     * exactly the same state. Call inside a transaction.
+     *
+     * @param  bool  $promote  false when the hold's own pool is being dissolved
+     *                         and must not hand the copy to anyone in it
+     */
+    public function cancelAndFree(Hold $hold, bool $promote = true): void
+    {
+        $ownedCopyId = in_array($hold->status, ['pending_approval', 'fulfilled'], true)
+            ? $hold->copy_id
+            : null;
+
+        $hold->update(['status' => 'cancelled']);
+
+        if ($ownedCopyId) {
+            $this->freeCopy((int) $ownedCopyId, $promote);
+        }
+
+        // Close any gap this cancellation left in the waitlist.
+        $this->resequence($hold->book_id, $hold->reserve_id);
+    }
+
+    /**
+     * A copy has stopped being held for someone.
+     *
+     * Offer it to the next eligible borrower in the copy's OWN pool — its
+     * current reserve_id decides which queue, so a copy detached from a
+     * released reserve serves the general waitlist and never a stale reserve
+     * queue. If nobody can take it, it goes back on the shelf.
+     *
+     * Only an `on_hold` copy is touched: a copy that is damaged, lost or
+     * already on loan keeps its status, so this can never make a damaged or
+     * lost copy available. Promotion itself refuses archived and unusable
+     * copies (see canServe()).
+     */
+    public function freeCopy(int $copyId, bool $promote = true): void
+    {
+        $copy = BookCopy::where('copy_id', $copyId)->lockForUpdate()->first();
+
+        if (! $copy || $copy->availability_status !== 'on_hold') {
+            return;
+        }
+
+        $promoted = false;
+
+        if ($promote) {
+            $promoted = $copy->reserve_id !== null
+                ? $this->advanceReserveQueue((int) $copy->reserve_id, $copy->copy_id)
+                : $this->advanceQueue($copy->book_id, $copy->copy_id);
+        }
+
+        if (! $promoted) {
+            $copy->refresh();
+
+            if ($copy->availability_status === 'on_hold') {
+                $copy->update(['availability_status' => 'available']);
+            }
+        }
     }
 }

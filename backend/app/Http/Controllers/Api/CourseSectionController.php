@@ -4,22 +4,35 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use App\Models\BookCopy;
+use App\Models\CourseReserve;
 use App\Models\CourseSection;
 use App\Models\CourseSectionStudent;
 use App\Models\Hold;
 use App\Models\Transaction;
+use App\Services\HoldService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class CourseSectionController extends Controller
 {
-    // For Teacher: Get their sections
+    /**
+     * Sections this caller manages: a faculty member's own; every section for
+     * Admin / Super Admin, who manage sections globally.
+     *
+     * People inside the payload are serialised as user_id + username only —
+     * the roster and the borrower label are all the UI renders, and nothing
+     * here needs another user's fine balance, account status or role flags.
+     */
     public function index(Request $request)
     {
-        $teacherId = $request->attributes->get('user_id');
-        $sections = CourseSection::with(['students.student', 'reserves.book', 'reserves.copies.activeTransaction'])
-            ->where('teacher_id', $teacherId)
+        $sections = CourseSection::with([
+            'students.student:user_id,username',
+            'reserves.book',
+            'reserves.copies.activeTransaction' => fn ($q) => $q->with('user:user_id,username'),
+        ])
+            ->when(! $this->isLibrarian($request), fn ($q) => $q->where('teacher_id', $request->attributes->get('user_id')))
             ->get();
-            
+
         return response()->json($sections);
     }
 
@@ -54,9 +67,19 @@ class CourseSectionController extends Controller
             'group_name' => 'nullable|string'
         ]);
 
-        $section = CourseSection::where('section_id', $sectionId)
-            ->where('teacher_id', $request->attributes->get('user_id'))
-            ->firstOrFail();
+        $section = $this->managedSection($request, $sectionId);
+
+        // Only student accounts belong on a roster. Enrolling a faculty member,
+        // an Admin or a Super Admin would make them eligible for the section's
+        // course reserves and put them in front of other students' classmates.
+        $targetRole = \App\Models\User::where('user_id', $validated['student_id'])->value('role');
+
+        if ($targetRole !== 'student') {
+            return response()->json([
+                'message' => 'Could not add this user to the section.',
+                'error' => 'Only student accounts can be enrolled in a course section.',
+            ], 422);
+        }
 
         $student = CourseSectionStudent::firstOrCreate([
             'section_id' => $section->section_id,
@@ -69,15 +92,32 @@ class CourseSectionController extends Controller
     }
 
     // For Teacher: Remove student
-    public function removeStudent(Request $request, $sectionId, $studentId)
+    public function removeStudent(Request $request, $sectionId, $studentId, HoldService $holds)
     {
-        $section = CourseSection::where('section_id', $sectionId)
-            ->where('teacher_id', $request->attributes->get('user_id'))
-            ->firstOrFail();
+        $section = $this->managedSection($request, $sectionId);
 
-        CourseSectionStudent::where('section_id', $section->section_id)
-            ->where('student_id', $studentId)
-            ->delete();
+        DB::transaction(function () use ($section, $studentId, $holds) {
+            CourseSectionStudent::where('section_id', $section->section_id)
+                ->where('student_id', $studentId)
+                ->delete();
+
+            // A student who leaves the section is no longer eligible for its
+            // course reserves. Close their place in those queues, and release
+            // any copy set aside for them: it goes to the next enrolled student
+            // waiting on that reserve, or back on the shelf. A damaged, lost or
+            // archived copy is never made available by this.
+            $reserveIds = CourseReserve::where('section_id', $section->section_id)->pluck('reserve_id');
+
+            $liveHolds = Hold::whereIn('reserve_id', $reserveIds)
+                ->where('user_id', $studentId)
+                ->whereIn('status', ['pending', 'pending_approval', 'fulfilled'])
+                ->lockForUpdate()
+                ->get();
+
+            foreach ($liveHolds as $hold) {
+                $holds->cancelAndFree($hold);
+            }
+        });
 
         return response()->json(['message' => 'Student removed']);
     }
@@ -89,9 +129,19 @@ class CourseSectionController extends Controller
 
         $sections = CourseSection::whereHas('students', function($q) use ($studentId) {
             $q->where('student_id', $studentId);
-        })->with(['teacher', 'reserves' => function($q) {
-            $q->where('status', 'approved')->with('book', 'copies.activeTransaction');
-        }])->get();
+        })->with([
+            // The card shows the teacher's name and nothing else about them.
+            'teacher:user_id,username',
+            'reserves' => function ($q) {
+                // A student has no reason to learn who else is borrowing a
+                // reserve copy: the loan's own fields are kept for the status
+                // logic, but the borrower's account is not attached.
+                $q->where('status', 'approved')->with([
+                    'book',
+                    'copies.activeTransaction' => fn ($t) => $t->without('user'),
+                ]);
+            },
+        ])->get();
 
         $this->attachCallerReserveState($sections, $studentId);
 
@@ -134,7 +184,9 @@ class CourseSectionController extends Controller
 
         foreach ($sections as $section) {
             foreach ($section->reserves ?? [] as $reserve) {
-                $copies = $reserve->copies ?? collect();
+                // Archived copies have left the collection; they neither count
+                // as allocated stock nor as available to the section.
+                $copies = ($reserve->copies ?? collect())->filter(fn ($c) => $c->archived_at === null);
 
                 $allocated = $copies->count();
                 $availableForSection = $copies
@@ -218,5 +270,25 @@ class CourseSectionController extends Controller
             'section_name' => $section->name,
             'classmates' => $classmates,
         ]);
+    }
+
+    /** Admin and Super Admin manage every section; faculty only their own. */
+    protected function isLibrarian(Request $request): bool
+    {
+        return str_contains(strtolower((string) $request->attributes->get('role', '')), 'admin');
+    }
+
+    /**
+     * The section this caller may manage, or 404.
+     *
+     * A faculty member asking for someone else's section gets the same 404 as
+     * for a section that does not exist, so the response never reveals which
+     * section ids are in use.
+     */
+    protected function managedSection(Request $request, $sectionId): CourseSection
+    {
+        return CourseSection::where('section_id', $sectionId)
+            ->when(! $this->isLibrarian($request), fn ($q) => $q->where('teacher_id', $request->attributes->get('user_id')))
+            ->firstOrFail();
     }
 }

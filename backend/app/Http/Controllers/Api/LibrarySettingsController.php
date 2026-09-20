@@ -67,8 +67,11 @@ class LibrarySettingsController extends Controller
             'note' => 'nullable|string|max:255',
         ]);
 
+        // A payload of nothing but unknown keys validates (settings is an
+        // array) yet contributes no validated key of its own, so `settings`
+        // can be absent here. That is a no-op save, not a server error.
         $changes = $this->settings->update(
-            $validated['settings'],
+            $validated['settings'] ?? [],
             (int) $request->attributes->get('user_id'),
             $validated['note'] ?? null
         );

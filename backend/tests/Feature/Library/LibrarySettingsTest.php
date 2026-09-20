@@ -403,6 +403,29 @@ test('LS19: an unknown key is ignored, never stored', function () {
     expect(LibrarySetting::where('key', 'student_max_books')->exists())->toBeTrue();
 });
 
+test('LS19b: a payload of ONLY unknown keys is a safe no-op, not a 500', function () {
+    $this->withHeaders(setAs('Admin', 'set_admin'))
+        ->putJson('/api/library/settings', [
+            'settings' => ['not_a_setting' => 1, 'is_super_admin' => true],
+        ])
+        ->assertStatus(200)
+        ->assertJson(['message' => 'No changes to save.']);
+
+    expect(LibrarySetting::whereIn('key', ['not_a_setting', 'is_super_admin'])->count())->toBe(0);
+});
+
+test('LS19c: the unknown key is dropped while the valid one beside it is saved', function () {
+    $this->withHeaders(setAs('Admin', 'set_admin'))
+        ->putJson('/api/library/settings', [
+            'settings' => ['not_a_setting' => 1, 'student_loan_days' => 9],
+        ])
+        ->assertStatus(200)
+        ->assertJson(['message' => '1 setting updated.']);
+
+    expect(LibrarySetting::where('key', 'not_a_setting')->exists())->toBeFalse()
+        ->and(LibrarySetting::where('key', 'student_loan_days')->value('value'))->toBe('9');
+});
+
 test('LS20: out-of-range values are rejected', function () {
     $this->withHeaders(setAs('Admin', 'set_admin'))
         ->putJson('/api/library/settings', ['settings' => ['student_loan_days' => 0]])

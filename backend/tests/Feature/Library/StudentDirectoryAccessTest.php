@@ -153,10 +153,11 @@ test('D11: no user is created by a rejected directory request', function () {
 |--------------------------------------------------------------------------
 */
 
-test('D12: the roster add/remove routes still reach their ownership checks', function () {
-    // Not 403 from the route gate — a student reaches the controller and is
-    // stopped by the existing section-ownership check (404), as before.
+test('D12: a student is refused at the roster route gate', function () {
+    // H-3: section management is faculty / librarian only. A student is now
+    // stopped by the route's role gate (403) before any section lookup, so the
+    // response no longer depends on whether the section exists.
     $this->withHeaders(dirAs('Student', 'dir_student'))
         ->postJson('/api/library/sections/999999/students', ['student_id' => $this->student->user_id])
-        ->assertStatus(404);
+        ->assertStatus(403);
 });

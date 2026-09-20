@@ -16,8 +16,10 @@ import CategorySelect from './CategorySelect';
  */
 export default function AdminInventoryPanel({ books, onChanged }) {
   const [search, setSearch] = useState('');
+  const [filterMode, setFilterMode] = useState('active');
   const [editing, setEditing] = useState(null);
   const [managing, setManaging] = useState(null);
+  const [copyFilterMode, setCopyFilterMode] = useState('active');
 
   const [form, setForm] = useState({});
   const [addCopies, setAddCopies] = useState({ quantity: 1, condition: 'new' });
@@ -31,12 +33,15 @@ export default function AdminInventoryPanel({ books, onChanged }) {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
-  const CONDITIONS = ['new', 'good', 'fair', 'poor'];
+  const CONDITIONS = ['new', 'good', 'fair', 'poor', 'damaged'];
   // Operational statuses a librarian may set by hand. checked_out and on_hold are
   // driven by circulation, not manual edits.
   const MANUAL_STATUSES = ['available', 'lost', 'damaged'];
 
   const visible = books.filter((b) => {
+    if (filterMode === 'active' && b.isArchived) return false;
+    if (filterMode === 'archived' && !b.isArchived) return false;
+
     const q = search.toLowerCase();
     if (!q) return true;
     return (
@@ -126,6 +131,14 @@ export default function AdminInventoryPanel({ books, onChanged }) {
   };
 
   const restore = async (book) => {
+    const ok = await confirm({
+      title: 'Restore title',
+      message: `Return "${book.title}" to the catalog?`,
+      confirmText: 'Restore',
+      isDestructive: false,
+    });
+    if (!ok) return;
+
     setBusy(true);
     try {
       const res = await api.post(`/library/books/${book.id}/restore`, {});
@@ -180,12 +193,80 @@ export default function AdminInventoryPanel({ books, onChanged }) {
     setBusy(true);
     setError('');
     try {
-      await api.put(`/library/copies/${copyId}`, patch);
+      const res = await api.put(`/library/copies/${copyId}`, patch);
       setNotice(`Copy CPY-${copyId} updated.`);
+      
+      const updatedCopy = res.data.copy || res.data;
+      setManaging(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          copies: (prev.copies || []).map(c => c.copy_id === copyId ? { ...c, ...updatedCopy } : c)
+        };
+      });
       if (onChanged) onChanged();
-      setManaging(null);
     } catch (err) {
       setError(err.response?.data?.error || err.response?.data?.message || 'Could not update copy.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const archiveCopy = async (copyId, title, accession) => {
+    const ok = await confirm({
+      title: 'Archive Physical Copy?',
+      message: `Hide copy ${accession} of "${title}"?`,
+      confirmText: 'Archive',
+      isDestructive: true,
+    });
+    if (!ok) return;
+
+    setBusy(true);
+    try {
+      const res = await api.post(`/library/copies/${copyId}/archive`, {});
+      toast.success(res.data.message || `Copy ${accession} archived.`);
+      
+      const updatedCopy = res.data.copy || res.data;
+      setManaging(prev => {
+        if (!prev) return prev;
+        return {
+           ...prev,
+           copies: (prev.copies || []).map(c => c.copy_id === copyId ? { ...c, ...updatedCopy } : c)
+        };
+      });
+      if (onChanged) onChanged();
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.response?.data?.message || 'Could not archive this copy.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const restoreCopy = async (copyId, title, accession) => {
+    const ok = await confirm({
+      title: 'Restore Physical Copy',
+      message: `Restore copy ${accession} of "${title}" to the active inventory?`,
+      confirmText: 'Restore',
+      isDestructive: false,
+    });
+    if (!ok) return;
+
+    setBusy(true);
+    try {
+      const res = await api.post(`/library/copies/${copyId}/restore`, {});
+      toast.success(res.data.message || `Copy restored.`);
+      
+      const updatedCopy = res.data.copy || res.data;
+      setManaging(prev => {
+        if (!prev) return prev;
+        return {
+           ...prev,
+           copies: (prev.copies || []).map(c => c.copy_id === copyId ? { ...c, ...updatedCopy } : c)
+        };
+      });
+      if (onChanged) onChanged();
+    } catch (err) {
+      toast.error(err.response?.data?.error || err.response?.data?.message || 'Could not restore this copy.');
     } finally {
       setBusy(false);
     }
@@ -200,13 +281,26 @@ export default function AdminInventoryPanel({ books, onChanged }) {
             Edit titles, add physical copies, and set copy condition or status.
           </p>
         </div>
-        <input
-          type="text"
-          placeholder="Find a title…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-full sm:w-60 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
-        />
+        <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+          <div className="flex bg-slate-100/80 rounded-xl p-1.5 shrink-0 shadow-inner w-full sm:w-auto">
+            {['active', 'archived', 'all'].map(m => (
+              <button
+                key={m}
+                onClick={() => setFilterMode(m)}
+                className={`flex-1 sm:flex-none px-4 py-1.5 text-[11px] font-extrabold rounded-lg capitalize transition-all duration-200 ${filterMode === m ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+          <input
+            type="text"
+            placeholder="Find a title…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="w-full sm:w-60 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
+          />
+        </div>
       </div>
 
       {notice && (
@@ -224,56 +318,64 @@ export default function AdminInventoryPanel({ books, onChanged }) {
         <p className="text-[12px] text-slate-500 italic py-6 text-center">No titles match that search.</p>
       ) : (
         <div className="flex flex-col gap-2.5 max-h-[26rem] overflow-y-auto pr-1">
-          {visible.map((book) => (
+          {visible.map((book) => {
+            const archivedCopyCount = (book.copies || []).filter(copy => copy.is_archived === true).length;
+            
+            return (
             <div
               key={book.id}
-              className="border border-slate-200/80 rounded-xl p-3.5 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
+              className="border border-slate-200/80 rounded-xl p-4 bg-white flex flex-col sm:flex-row sm:items-start justify-between gap-4 shadow-sm"
             >
-              <div className="min-w-0">
-                <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight truncate">{book.title}</h3>
-                <p className="text-[11px] text-slate-400 font-medium truncate">
-                  {book.author}
-                  {book.edition ? ` · ${book.edition}` : ''}
-                  {book.publisher ? ` · ${book.publisher}` : ''}
-                  {book.publicationYear ? ` (${book.publicationYear})` : ''}
-                </p>
-                <p className="text-[11px] text-slate-400 font-medium truncate">
-                  ISBN {book.isbn || '—'} · {book.location}
-                </p>
-                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                  <span className="inline-block text-[9.5px] font-extrabold px-2 py-0.5 rounded-full bg-[#ecfdf5] text-[#059669] border border-[#a7f3d0]/60">
+              <div className="min-w-0 flex-1">
+                <h3 className="font-extrabold text-[14px] text-[#0f172a] leading-tight truncate mb-1">{book.title}</h3>
+                <div className="flex flex-col gap-0.5">
+                  <p className="text-[11.5px] text-slate-500 font-medium truncate">
+                    {book.author}
+                    {book.edition ? ` · ${book.edition}` : ''}
+                    {book.publisher ? ` · ${book.publisher}` : ''}
+                    {book.publicationYear ? ` (${book.publicationYear})` : ''}
+                  </p>
+                  <p className="text-[11px] text-slate-400 font-medium truncate">
+                    ISBN {book.isbn || '—'} · <span className="font-semibold text-slate-500">{book.location}</span>
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                  <span className="inline-flex items-center text-[10px] font-extrabold px-2.5 py-1 rounded-full bg-[#ecfdf5] text-[#059669] border border-[#a7f3d0]/60 shadow-sm">
                     {book.available} of {book.total} available
                   </span>
                   {book.reservedCount > 0 && (
-                    <span className="inline-block text-[9.5px] font-extrabold px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    <span className="inline-block text-[9.5px] font-extrabold px-2.5 py-1 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
                       {book.reservedCount} on course reserve
                     </span>
                   )}
-                  {book.isArchived && (
-                    <span className="inline-block text-[9.5px] font-extrabold px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 border border-slate-300">
-                      ARCHIVED
+                  {archivedCopyCount > 0 && (
+                    <span className="inline-flex items-center text-[9.5px] font-extrabold px-2.5 py-1 rounded-full bg-slate-100 text-slate-600 border border-slate-300">
+                      {archivedCopyCount} archived
                     </span>
+                  )}
+                  {book.isArchived && (
+                    <StatusBadge status="archived" />
                   )}
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+              <div className="flex items-center gap-2 self-start sm:self-center shrink-0 flex-wrap justify-start sm:justify-end mt-1 sm:mt-0">
                 <button
                   onClick={() => openEdit(book)}
-                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer"
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer transition-colors"
                 >
                   Edit Title
                 </button>
                 <button
                   onClick={() => { setManaging(book); setError(''); setNotice(''); }}
-                  className="bg-[#1e293b] hover:bg-[#0f172a] text-white text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer"
+                  className="bg-[#1e293b] hover:bg-[#0f172a] text-white text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer shadow-xs transition-colors"
                 >
                   Manage Copies
                 </button>
 
                 {/* One cover per title. The file input is hidden behind a
                     label so the button matches the others. */}
-                <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer">
+                <label className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer transition-colors m-0 flex items-center">
                   {book.image && !book.image.includes('unsplash') ? 'Replace Cover' : 'Add Cover'}
                   <input
                     type="file"
@@ -287,7 +389,7 @@ export default function AdminInventoryPanel({ books, onChanged }) {
                   <button
                     onClick={() => removeCover(book)}
                     disabled={busy}
-                    className="bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-[11px] font-extrabold py-2 px-3 rounded-xl cursor-pointer disabled:opacity-60"
+                    className="bg-white hover:bg-slate-50 text-slate-600 border border-slate-200 text-[11px] font-extrabold py-2 px-3 rounded-xl cursor-pointer disabled:opacity-60 transition-colors"
                   >
                     Remove Cover
                   </button>
@@ -297,28 +399,29 @@ export default function AdminInventoryPanel({ books, onChanged }) {
                   <button
                     onClick={() => restore(book)}
                     disabled={busy}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer disabled:opacity-60"
+                    className="bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer disabled:opacity-60 transition-colors"
                   >
-                    Restore
+                    Restore Title
                   </button>
                 ) : (
                   <button
                     onClick={() => archive(book)}
                     disabled={busy}
-                    className="bg-white hover:bg-rose-50 text-rose-700 border border-rose-300 text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer disabled:opacity-60"
+                    className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[11px] font-extrabold py-2 px-3.5 rounded-xl cursor-pointer disabled:opacity-60 transition-colors"
                   >
-                    Archive
+                    Archive Title
                   </button>
                 )}
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
       {/* Edit title */}
       {editing && (
-        <div className="fixed inset-0 flex items-center justify-center p-4 z-[110]">
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-xs anim-fade-in"
             onClick={() => setEditing(null)}
@@ -397,7 +500,7 @@ export default function AdminInventoryPanel({ books, onChanged }) {
 
       {/* Manage copies */}
       {managing && (
-        <div className="fixed inset-0 flex items-center justify-center p-4 z-[110]">
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-xs anim-fade-in"
             onClick={() => setManaging(null)}
@@ -408,54 +511,123 @@ export default function AdminInventoryPanel({ books, onChanged }) {
             role="dialog"
             aria-modal="true"
             aria-labelledby="manage-copies-heading"
-            className="relative z-10 bg-white rounded-[1.5rem] p-6 shadow-2xl border border-slate-100 max-w-lg w-full anim-zoom-in"
+            className="relative z-10 bg-white rounded-[1.5rem] p-6 shadow-2xl border border-slate-100 max-w-2xl w-full anim-zoom-in flex flex-col max-h-[90vh]"
           >
-            <h2 id="manage-copies-heading" className="text-[17px] font-black text-[#0f172a] leading-tight">{managing.title}</h2>
-            <p className="text-slate-400 text-[11px] font-medium mt-0.5 mb-4">Physical copies</p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-5 gap-4">
+              <div>
+                <h2 id="manage-copies-heading" className="text-[18px] font-black text-[#0f172a] leading-tight pr-4">{managing.title}</h2>
+                <p className="text-slate-500 text-[12px] font-semibold mt-1">Manage physical copies</p>
+              </div>
+              <div className="flex bg-slate-100/80 rounded-xl p-1.5 shrink-0 shadow-inner w-full sm:w-auto">
+                {['active', 'archived', 'all'].map(m => (
+                  <button
+                    key={m}
+                    onClick={() => setCopyFilterMode(m)}
+                    className={`flex-1 sm:flex-none px-3.5 py-1.5 text-[10.5px] font-extrabold rounded-lg capitalize transition-all duration-200 ${copyFilterMode === m ? 'bg-white text-slate-800 shadow-sm ring-1 ring-slate-200/50' : 'text-slate-500 hover:text-slate-700 hover:bg-slate-200/50'}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
 
-            <div className="flex flex-col gap-2 max-h-56 overflow-y-auto pr-1 mb-4">
+            <div className="flex flex-col gap-3 overflow-y-auto pr-1 mb-5 min-h-[10rem]">
               {(managing.copies || []).length === 0 && (
-                <p className="text-[11.5px] text-slate-500 italic">No copies yet. Add some below.</p>
+                <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
+                  <p className="text-[12px] text-slate-500 italic font-medium">No copies yet. Add some below.</p>
+                </div>
               )}
 
-              {(managing.copies || []).map((copy) => {
-                const locked = copy.availability_status === 'checked_out' || copy.availability_status === 'on_hold';
+              {(() => {
+                const copiesToManage = (managing.copies || []).filter(c => {
+                  if (copyFilterMode === 'active' && c.is_archived) return false;
+                  if (copyFilterMode === 'archived' && !c.is_archived) return false;
+                  return true;
+                });
+                if (copiesToManage.length === 0 && (managing.copies || []).length > 0) {
+                   return (
+                     <div className="text-center py-8 bg-slate-50 rounded-xl border border-slate-100">
+                       <p className="text-[12px] text-slate-500 italic font-medium">No copies match the current filter.</p>
+                     </div>
+                   );
+                }
+                return copiesToManage.map((copy) => {
+                  const locked = copy.is_archived || copy.availability_status === 'checked_out' || copy.availability_status === 'on_hold';
 
-                return (
-                  <div key={copy.copy_id} className="border border-slate-200 rounded-xl p-2.5 bg-white flex flex-wrap items-center justify-between gap-2">
-                    <div className="font-mono text-[11px] font-extrabold text-[#0f172a]">
-                      {copy.accession_number || `CPY-${copy.copy_id}`}
-                      <StatusBadge status={copy.availability_status} className="ml-2" />
+                  return (
+                    <div key={copy.copy_id} className="border border-slate-200/80 rounded-xl p-3.5 bg-white flex flex-col gap-3 shadow-xs">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
+                        <div className="font-mono text-[11.5px] font-extrabold text-[#0f172a] shrink-0 flex items-center flex-wrap gap-2.5 min-w-0">
+                          <span className="truncate">{copy.accession_number || `CPY-${copy.copy_id}`}</span>
+                          {copy.is_archived ? (
+                            <StatusBadge status="archived" />
+                          ) : (
+                            <StatusBadge status={copy.availability_status} />
+                          )}
+                        </div>
+
+                        <div className="flex items-center flex-wrap gap-2.5">
+                          <div className="flex items-center gap-1.5">
+                            <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider hidden sm:block">Cond</label>
+                            <select
+                              value={copy.condition}
+                              disabled={copy.is_archived}
+                              onChange={(e) => updateCopy(copy.copy_id, { condition: e.target.value })}
+                              className="text-[11.5px] px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white disabled:bg-slate-50 disabled:text-slate-400 font-semibold focus:ring-1 focus:ring-[#8B1A24] outline-none"
+                            >
+                              {CONDITIONS.map((c) => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="flex items-center gap-1.5">
+                            <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider hidden sm:block">Avail</label>
+                            <select
+                              value={copy.availability_status}
+                              disabled={locked}
+                              onChange={(e) => updateCopy(copy.copy_id, { availability_status: e.target.value })}
+                              title={locked ? (copy.is_archived ? 'Archived copies cannot be modified.' : 'On loan or on hold — use Check-In to return it to the shelf.') : undefined}
+                              className="text-[11.5px] px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white disabled:bg-slate-50 disabled:text-slate-400 font-semibold focus:ring-1 focus:ring-[#8B1A24] outline-none"
+                            >
+                              {locked ? (
+                                <option value={copy.availability_status}>{copy.availability_status.replace('_', ' ')}</option>
+                              ) : (
+                                MANUAL_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)
+                              )}
+                            </select>
+                          </div>
+
+                          {copy.is_archived ? (
+                             <button
+                               onClick={() => restoreCopy(copy.copy_id, managing.title, copy.accession_number || `CPY-${copy.copy_id}`)}
+                               disabled={busy}
+                               className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10.5px] font-extrabold py-1.5 px-3 rounded-lg cursor-pointer disabled:opacity-50 shrink-0 transition-colors"
+                             >
+                               Restore Copy
+                             </button>
+                          ) : (
+                             <button
+                               onClick={() => archiveCopy(copy.copy_id, managing.title, copy.accession_number || `CPY-${copy.copy_id}`)}
+                               disabled={busy}
+                               className="bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-[10.5px] font-extrabold py-1.5 px-3 rounded-lg cursor-pointer disabled:opacity-50 shrink-0 transition-colors"
+                             >
+                               Archive Copy
+                             </button>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {!copy.is_archived && copy.condition !== 'damaged' && copy.availability_status === 'damaged' && (
+                        <div className="w-full text-[11px] text-amber-800 bg-amber-50/80 rounded-lg px-3 py-2 font-semibold border border-amber-200/60 flex items-start gap-2">
+                          <svg className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                          <span>This copy remains unavailable until you set Availability to Available.</span>
+                        </div>
+                      )}
                     </div>
-
-                    <div className="flex items-center gap-2">
-                      <select
-                        defaultValue={copy.condition}
-                        onChange={(e) => updateCopy(copy.copy_id, { condition: e.target.value })}
-                        className="text-[11px] px-2 py-1.5 border border-slate-200 rounded-lg bg-white"
-                      >
-                        {CONDITIONS.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-
-                      <select
-                        value={copy.availability_status}
-                        disabled={locked}
-                        onChange={(e) => updateCopy(copy.copy_id, { availability_status: e.target.value })}
-                        title={locked ? 'On loan or on hold — use Check-In to return it to the shelf.' : undefined}
-                        className="text-[11px] px-2 py-1.5 border border-slate-200 rounded-lg bg-white disabled:bg-slate-100 disabled:text-slate-400"
-                      >
-                        {locked ? (
-                          <option value={copy.availability_status}>{copy.availability_status.replace('_', ' ')}</option>
-                        ) : (
-                          MANUAL_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)
-                        )}
-                      </select>
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                });
+              })()}
             </div>
 
             <div className="border-t border-slate-100 pt-4">
@@ -469,12 +641,12 @@ export default function AdminInventoryPanel({ books, onChanged }) {
                   max="100"
                   value={addCopies.quantity}
                   onChange={(e) => setAddCopies({ ...addCopies, quantity: e.target.value })}
-                  className="w-24 px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px]"
+                  className="w-24 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
                 />
                 <select
                   value={addCopies.condition}
                   onChange={(e) => setAddCopies({ ...addCopies, condition: e.target.value })}
-                  className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px]"
+                  className="px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[13px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
                 >
                   {CONDITIONS.map((c) => (
                     <option key={c} value={c}>{c}</option>

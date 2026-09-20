@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\BookCopy;
+use App\Services\CopyArchiveService;
 use App\Services\InventoryService;
 use Illuminate\Http\Request;
 
@@ -53,9 +55,14 @@ class BookCopyController extends Controller
     public function update(Request $request, int $id)
     {
         $validated = $request->validate([
-            'condition' => 'sometimes|in:new,good,fair,poor',
-            'availability_status' => 'sometimes|in:available,checked_out,on_hold,lost,damaged',
+            'condition' => 'sometimes|in:'.implode(',', BookCopy::CONDITIONS),
+            // checked_out and on_hold are owned by circulation and the hold
+            // queue; a librarian may only set these three by hand.
+            'availability_status' => 'sometimes|in:'.implode(',', BookCopy::MANUAL_STATUSES),
             'condition_note' => 'nullable|string|max:255',
+        ], [
+            'availability_status.in' => 'Availability can only be set to available, lost or damaged. Checked out and on hold are managed by checkout and the hold queue.',
+            'condition.in' => 'Condition must be one of: '.implode(', ', BookCopy::CONDITIONS).'.',
         ]);
 
         try {
@@ -72,5 +79,52 @@ class BookCopyController extends Controller
         }
 
         return response()->json($copy);
+    }
+
+    /**
+     * Archive one physical copy. Admin / Super Admin only (route group).
+     *
+     * The copy keeps its accession number, condition, availability and loan
+     * history; it simply leaves circulation.
+     */
+    public function archive(Request $request, int $id, CopyArchiveService $archives)
+    {
+        $validated = $request->validate(['reason' => 'nullable|string|max:1000']);
+
+        try {
+            $copy = $archives->archive(
+                $id,
+                (int) $request->attributes->get('user_id'),
+                $validated['reason'] ?? null
+            );
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Could not archive this copy.',
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => "Copy {$copy->label} archived. Its history remains available.",
+            'copy' => $copy,
+        ]);
+    }
+
+    /** Return an archived copy to the collection, exactly as it was. */
+    public function restore(int $id, CopyArchiveService $archives)
+    {
+        try {
+            $copy = $archives->restore($id);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'Could not restore this copy.',
+                'error' => $e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => "Copy {$copy->label} restored.",
+            'copy' => $copy,
+        ]);
     }
 }

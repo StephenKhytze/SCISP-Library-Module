@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import useDialog from './useDialog';
 
 const ConfirmDialogContext = createContext(null);
@@ -46,8 +47,8 @@ export function ConfirmDialogProvider({ children }) {
   return (
     <ConfirmDialogContext.Provider value={confirm}>
       {children}
-      {dialogState.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      {dialogState.isOpen && createPortal(
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div
             className="absolute inset-0 bg-black/40 backdrop-blur-sm anim-fade-in"
             onClick={dialogState.onCancel}
@@ -59,7 +60,7 @@ export function ConfirmDialogProvider({ children }) {
             aria-modal="true"
             aria-labelledby="confirm-dialog-title"
             aria-describedby="confirm-dialog-message"
-            className={`bg-white rounded-2xl shadow-xl w-full overflow-hidden relative z-10 anim-zoom-in ${
+            className={`bg-white rounded-2xl shadow-xl w-full overflow-hidden relative z-[70] anim-zoom-in ${
               dialogState.content ? 'max-w-md' : 'max-w-sm'
             }`}
           >
@@ -86,7 +87,8 @@ export function ConfirmDialogProvider({ children }) {
               </button>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </ConfirmDialogContext.Provider>
   );

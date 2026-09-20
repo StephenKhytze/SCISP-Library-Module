@@ -106,15 +106,21 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
     // D-1: roster of ONE section, authorised per-section inside the controller.
     // Deliberately not the unrestricted directory that SEC-05 locked down.
     Route::get('/sections/{sectionId}/classmates', [\App\Http\Controllers\Api\CourseSectionController::class, 'classmates']);
-    Route::get('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'index']);
-    Route::post('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'store']);
+    // Section management (H-3): faculty for their own sections, Admin and
+    // Super Admin for all. Students use /sections/me and /classmates instead.
+    Route::get('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'index'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
+    Route::post('/sections', [\App\Http\Controllers\Api\CourseSectionController::class, 'store'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
     // SEC-05: the student directory is roster tooling, not borrower-facing.
     // Faculty need it for the course-section roster UI; librarians may also use it.
     // Ordinary students must not be able to enumerate every other student.
     Route::get('/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'getStudents'])
         ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
-    Route::post('/sections/{sectionId}/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'addStudent']);
-    Route::delete('/sections/{sectionId}/students/{studentId}', [\App\Http\Controllers\Api\CourseSectionController::class, 'removeStudent']);
+    Route::post('/sections/{sectionId}/students', [\App\Http\Controllers\Api\CourseSectionController::class, 'addStudent'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
+    Route::delete('/sections/{sectionId}/students/{studentId}', [\App\Http\Controllers\Api\CourseSectionController::class, 'removeStudent'])
+        ->middleware(\App\Http\Middleware\MockAuthMiddleware::class . ':Super Admin,Admin,Teacher,Faculty');
 
     // Course Reserves
     // Faculty request a reserve for a section they own; that ownership check lives in
@@ -140,6 +146,11 @@ Route::prefix('library')->middleware(\App\Http\Middleware\MockAuthMiddleware::cl
         Route::put('/books/{id}', [\App\Http\Controllers\Api\BookController::class, 'update']);
         Route::post('/books/{id}/copies', [\App\Http\Controllers\Api\BookCopyController::class, 'store']);
         Route::put('/copies/{id}', [\App\Http\Controllers\Api\BookCopyController::class, 'update']);
+
+        // Archive one physical copy (not the whole title). The copy keeps its
+        // accession number, condition, status and history; restore is exact.
+        Route::post('/copies/{id}/archive', [\App\Http\Controllers\Api\BookCopyController::class, 'archive']);
+        Route::post('/copies/{id}/restore', [\App\Http\Controllers\Api\BookCopyController::class, 'restore']);
 
         // Category vocabulary. Reading is open to everyone (see above);
         // only a librarian may add to it or rename one.
