@@ -343,10 +343,25 @@ export default function TeacherReservesView({ books, onSectionsLoaded }) {
           </div>
 
           <form onSubmit={submitReserveRequest} className="flex flex-col gap-3">
-            <div>
-              <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Course Section *</label>
-              <SearchableBookPicker books={books} value={reserveForm.book_id} onChange={(v) => setReserveForm({...reserveForm, book_id: v})} />
-            </div>
+                          <div>
+                <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Course Section *</label>
+                <select
+                  required
+                  className="w-full border border-slate-200 rounded-xl py-2 px-3 text-xs font-medium text-[#0f172a] mb-3 focus:outline-none focus:border-[#8B1A24]"
+                  value={reserveForm.section_id}
+                  onChange={(e) => setReserveForm({...reserveForm, section_id: e.target.value})}
+                >
+                  <option value="">Select Section...</option>
+                  {sections.map(s => (
+                    <option key={s.section_id} value={s.section_id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+
+                <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Book Title *</label>
+                <SearchableBookPicker books={books} value={reserveForm.book_id} onChange={(v) => setReserveForm({...reserveForm, book_id: v})} />
+              </div>
             <div className="flex gap-3">
               <div className="flex-1">
                 <label className="block text-[10.5px] font-extrabold text-[#0f172a] mb-1">Copies Requested</label>
