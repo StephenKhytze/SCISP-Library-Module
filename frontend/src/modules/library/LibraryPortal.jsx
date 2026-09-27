@@ -138,8 +138,7 @@ export default function LibraryPortal() {
 
   const bookModalRef = useDialog(!!selectedBook, () => setSelectedBook(null));
   const loanModalRef = useDialog(!!selectedLoan, () => setSelectedLoan(null));
-  const addBookModalRef = useDialog(showAddBookModal, () => setShowAddBookModal(false));
-
+  
   const userStr = localStorage.getItem('user');
   const user = userStr ? JSON.parse(userStr) : null;
 
@@ -1759,7 +1758,17 @@ export default function LibraryPortal() {
 
               {manageSection === 'inventory' && (
                 <>
-              <AdminInventoryPanel books={books} onChanged={refreshCurrent} onAddTitle={() => setShowAddBookModal(true)} />
+              <AdminInventoryPanel 
+                  books={books} 
+                  onChanged={refreshCurrent} 
+                  newBook={newBook}
+                  setNewBook={setNewBook}
+                  handleAddBook={handleAddBook}
+                  actionBusy={actionBusy}
+                  categories={categories}
+                  onCategoriesChanged={registerCategory}
+                  canManageCategories={isLibrarian}
+                />
               <div className="h-4" />
               
                 </>
@@ -2757,20 +2766,7 @@ export default function LibraryPortal() {
       {/* ========================================================================= */}
 
       {/* Modal: View Copies & Physical RFID Status */}
-        <AddBookForm 
-          isOpen={showAddBookModal}
-          newBook={newBook} 
-          setNewBook={setNewBook} 
-          handleAddBook={async (e) => {
-            await handleAddBook(e);
-            setShowAddBookModal(false);
-          }} 
-          onCancel={() => setShowAddBookModal(false)} 
-          actionBusy={actionBusy}
-          categories={categories}
-          onCategoriesChanged={registerCategory}
-          canManageCategories={isLibrarian}
-        />
+        
       {selectedBook && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
           <div
@@ -2990,153 +2986,6 @@ export default function LibraryPortal() {
         </div>
       )}
 
-      {/* Modal: Register New Title & Physical Copies Pop-Up */}
-      {showAddBookModal && (
-        <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
-          <div
-            className="absolute inset-0 bg-black/60 backdrop-blur-xs anim-fade-in"
-            onClick={() => setShowAddBookModal(false)}
-            aria-hidden="true"
-          />
-          <div
-            ref={addBookModalRef}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="add-book-modal-title"
-            className="relative z-10 bg-white rounded-[1.5rem] p-6 shadow-2xl border border-slate-100 max-w-lg w-full max-h-[92vh] overflow-y-auto anim-zoom-in"
-          >
-            <div className="flex justify-between items-start mb-2">
-              <div>
-                <span className="inline-block bg-[#fef3c7] text-[#92400e] border border-[#fde68a] text-[9.5px] font-black uppercase px-2.5 py-0.5 rounded tracking-wider mb-1">
-                  LIBRARY INVENTORY MANAGEMENT
-                </span>
-                <h2 id="add-book-modal-title" className="text-[19px] font-black text-[#0f172a] leading-tight tracking-tight">
-                  Register New Title &amp; Physical Copies
-                </h2>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowAddBookModal(false)}
-                aria-label="Close new title form"
-                className="text-slate-400 hover:text-slate-600 text-lg font-bold p-1 cursor-pointer transition-colors"
-              >
-                ✕
-              </button>
-            </div>
-
-            <form onSubmit={handleAddBook} className="flex flex-col gap-3.5 mt-3">
-              <div>
-                <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Book Title *</label>
-                <input
-                  type="text"
-                  required
-                  value={newBook.title}
-                  onChange={(e) => setNewBook({ ...newBook, title: e.target.value })}
-                  placeholder="e.g. Operating System Concepts 10th Ed."
-                  className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Author *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newBook.author}
-                    onChange={(e) => setNewBook({ ...newBook, author: e.target.value })}
-                    placeholder="e.g. Abraham Silberschatz"
-                    className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">ISBN-13 *</label>
-                  <input
-                    type="text"
-                    required
-                    value={newBook.isbn}
-                    onChange={(e) => setNewBook({ ...newBook, isbn: e.target.value })}
-                    placeholder="e.g. 978-1118063330"
-                    className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label htmlFor="add-book-modal-category" className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Category</label>
-                  <CategorySelect
-                    id="add-book-modal-category"
-                    value={newBook.category}
-                    onChange={(next) => setNewBook({ ...newBook, category: next })}
-                    categories={categories}
-                    onCategoriesChanged={registerCategory}
-                    canCreate={isLibrarian}
-                    required
-                    className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-bold bg-[#f8fafc] cursor-pointer"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Copy Quantity</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="50"
-                    value={newBook.copies}
-                    onChange={(e) => setNewBook({ ...newBook, copies: e.target.value })}
-                    className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] font-extrabold bg-[#f8fafc]"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] font-extrabold text-[#0f172a] mb-1">Shelf Location</label>
-                <input
-                  type="text"
-                  value={newBook.location}
-                  onChange={(e) => setNewBook({ ...newBook, location: e.target.value })}
-                  placeholder="Floor 2 - Shelf CS-101"
-                  className="w-full border border-slate-200 rounded-xl py-2 px-3 text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24] text-[#0f172a] bg-[#f8fafc]"
-                />
-              </div>
-
-              <div className="flex justify-end items-center gap-2.5 pt-3 border-t border-slate-100 mt-1">
-                <button
-                  type="button"
-                  onClick={() => setShowAddBookModal(false)}
-                  className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 text-[11.5px] font-extrabold hover:bg-slate-50 cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={actionBusy === 'add-book'}
-                  className="px-4 py-2 bg-[#8B1A24] text-white rounded-xl text-[11.5px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {actionBusy === 'add-book' ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />Saving...</> : 'Save Title & Register Copies'}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Classmates.
-
-          There is no classmates endpoint yet, so no request is made and no
-          names are invented: the modal shows its own "unavailable" state until
-          the roster is served. */}
-      <ClassmatesModal
-        open={!!classmatesFor}
-        sectionName={classmatesFor?.course}
-        classmates={classmates}
-        onClose={() => { setClassmatesFor(null); setClassmates(undefined); }}
-      />
-
-      {/* Background refresh. Kept out of the layout flow so the page does not
-          jump back to skeletons after every action. */}
       {refreshing && (
         <div
           role="status"

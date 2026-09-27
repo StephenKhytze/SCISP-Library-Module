@@ -5,6 +5,7 @@ import useDialog from './useDialog';
 import { useToast } from './ToastProvider';
 import { useConfirm } from './ConfirmDialog';
 import CategorySelect from './CategorySelect';
+import AddBookForm from './AddBookForm';
 
 /**
  * Librarian inventory management.
@@ -14,8 +15,21 @@ import CategorySelect from './CategorySelect';
  *   POST /library/books/{id}/copies   add physical copies
  *   PUT  /library/copies/{id}         update a copy's condition / availability
  */
-export default function AdminInventoryPanel({ books, onChanged, onAddTitle }) {
+export default function AdminInventoryPanel({ 
+  books, 
+  onChanged,
+  newBook,
+  setNewBook,
+  handleAddBook,
+  actionBusy,
+  categories,
+  onCategoriesChanged,
+  canManageCategories
+}) {
   const [search, setSearch] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [isAddBookOpen, setIsAddBookOpen] = useState(false);
+  const derivedCategories = [...new Set(books.map(b => b.categories?.[0]).filter(Boolean))];
   const [filterMode, setFilterMode] = useState('active');
   const [editing, setEditing] = useState(null);
   const [managing, setManaging] = useState(null);
@@ -39,6 +53,7 @@ export default function AdminInventoryPanel({ books, onChanged, onAddTitle }) {
   const MANUAL_STATUSES = ['available', 'lost', 'damaged'];
 
   const visible = books.filter((b) => {
+    if (categoryFilter && b.categories?.[0] !== categoryFilter) return false;
     if (filterMode === 'active' && b.isArchived) return false;
     if (filterMode === 'archived' && !b.isArchived) return false;
 
@@ -301,9 +316,17 @@ export default function AdminInventoryPanel({ books, onChanged, onAddTitle }) {
               </button>
             ))}
           </div>
-          <input
-            type="text"
-            placeholder="Find a title…"
+          <select
+              value={categoryFilter}
+              onChange={(e) => setCategoryFilter(e.target.value)}
+              className="px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12.5px] font-medium text-slate-700 focus:outline-none focus:ring-1 focus:ring-[#8B1A24] w-full sm:w-auto"
+            >
+              <option value="">All Categories</option>
+              {derivedCategories.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input
+              type="text"
+              placeholder="Find a title..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full sm:w-60 px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-[12.5px] focus:outline-none focus:ring-1 focus:ring-[#8B1A24]"
@@ -445,6 +468,11 @@ export default function AdminInventoryPanel({ books, onChanged, onAddTitle }) {
             <h2 id="edit-title-heading" className="text-[17px] font-black text-[#0f172a] mb-4">Edit Title</h2>
 
             <div className="flex flex-col gap-3">
+          {visible.length === 0 && (
+            <div className="text-center py-10 bg-slate-50 rounded-2xl border border-slate-100">
+              <p className="text-[13px] text-slate-500 font-medium">No titles match the current search and category filters.</p>
+            </div>
+          )}
               {[
                 ['book_title', 'Title'],
                 ['author', 'Author'],
