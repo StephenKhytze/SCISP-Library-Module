@@ -297,14 +297,12 @@ export default function AdminInventoryPanel({
           </p>
         </div>
         <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
-          {onAddTitle && (
-            <button 
-              onClick={onAddTitle}
+          <button 
+              onClick={() => setIsAddBookOpen(true)}
               className="flex items-center justify-center bg-[#8B1A24] hover:bg-[#72151d] transition-colors text-white text-[12px] font-extrabold px-4 py-2 rounded-xl whitespace-nowrap shadow-sm"
             >
               + Register Title
             </button>
-          )}
           <div className="flex bg-slate-100/80 rounded-xl p-1.5 shrink-0 shadow-inner w-full sm:w-auto">
             {['active', 'archived', 'all'].map(m => (
               <button

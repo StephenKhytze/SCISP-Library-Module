@@ -2751,7 +2751,17 @@ export default function LibraryPortal() {
 
               {manageSection === 'inventory' && (
                 <>
-              <AdminInventoryPanel books={books} onChanged={refreshCurrent} onAddTitle={() => setShowAddBookModal(true)} />
+              <AdminInventoryPanel 
+                  books={books} 
+                  onChanged={refreshCurrent} 
+                  newBook={newBook}
+                  setNewBook={setNewBook}
+                  handleAddBook={handleAddBook}
+                  actionBusy={actionBusy}
+                  categories={categories}
+                  onCategoriesChanged={registerCategory}
+                  canManageCategories={isLibrarian}
+                />
               <div className="h-4" />
               
                 </>
