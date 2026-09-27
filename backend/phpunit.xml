@@ -18,19 +18,61 @@
         </include>
     </source>
     <php>
-        <env name="APP_ENV" value="testing"/>
-        <env name="APP_MAINTENANCE_DRIVER" value="file"/>
-        <env name="BCRYPT_ROUNDS" value="4"/>
-        <env name="BROADCAST_CONNECTION" value="null"/>
-        <env name="CACHE_STORE" value="array"/>
-        <env name="DB_CONNECTION" value="sqlite"/>
-        <env name="DB_DATABASE" value=":memory:"/>
-        <env name="DB_URL" value=""/>
-        <env name="MAIL_MAILER" value="array"/>
-        <env name="QUEUE_CONNECTION" value="sync"/>
-        <env name="SESSION_DRIVER" value="array"/>
-        <env name="PULSE_ENABLED" value="false"/>
-        <env name="TELESCOPE_ENABLED" value="false"/>
-        <env name="NIGHTWATCH_ENABLED" value="false"/>
+        <!--
+            force="true" is REQUIRED, not cosmetic.
+
+            PHPUnit only applies <env> when the variable is absent from the real
+            environment (PhpHandler::handleEnvVariables: `if ($force || getenv($name) === false)`).
+            docker-compose exports DB_CONNECTION=mysql and DB_DATABASE=laravel into the
+            backend container, so without force="true" these values are silently ignored
+            and RefreshDatabase runs migrate:fresh against the LIVE database.
+
+            A .env.testing file cannot substitute for this: Laravel's Env repository is
+            immutable() and will not overwrite an existing real environment variable.
+
+            See LIBRARY_TASK_TEST_SAFETY.md.
+        -->
+        <env name="APP_ENV" value="testing" force="true"/>
+        <env name="APP_MAINTENANCE_DRIVER" value="file" force="true"/>
+        <env name="BCRYPT_ROUNDS" value="4" force="true"/>
+        <env name="BROADCAST_CONNECTION" value="null" force="true"/>
+        <env name="CACHE_STORE" value="array" force="true"/>
+        <env name="DB_CONNECTION" value="sqlite" force="true"/>
+        <env name="DB_DATABASE" value=":memory:" force="true"/>
+        <env name="DB_URL" value="" force="true"/>
+        <env name="DB_HOST" value="" force="true"/>
+        <env name="DB_PORT" value="" force="true"/>
+        <env name="DB_USERNAME" value="" force="true"/>
+        <env name="DB_PASSWORD" value="" force="true"/>
+        <env name="MAIL_MAILER" value="array" force="true"/>
+        <env name="QUEUE_CONNECTION" value="sync" force="true"/>
+        <env name="SESSION_DRIVER" value="array" force="true"/>
+        <env name="PULSE_ENABLED" value="false" force="true"/>
+        <env name="TELESCOPE_ENABLED" value="false" force="true"/>
+        <env name="NIGHTWATCH_ENABLED" value="false" force="true"/>
+
+        <!--
+            <server> entries are REQUIRED IN ADDITION to <env>, not redundant.
+
+            PHPUnit's handleEnvVariables() writes only putenv() and $_ENV. Laravel reads
+            env() through Dotenv, whose DEFAULT ADAPTER ORDER puts ServerConstAdapter
+            ($_SERVER) BEFORE EnvConstAdapter ($_ENV) — see
+            vendor/vlucas/phpdotenv/src/Repository/RepositoryBuilder.php.
+
+            docker-compose's variables land in $_SERVER as well as $_ENV, so $_SERVER
+            wins and <env force="true"> alone is silently defeated. PHPUnit's
+            handleServerVariables() writes $_SERVER directly, which is what actually
+            overrides the container environment.
+
+            Keep these in sync with the DB_* <env> entries above.
+        -->
+        <server name="APP_ENV" value="testing"/>
+        <server name="DB_CONNECTION" value="sqlite"/>
+        <server name="DB_DATABASE" value=":memory:"/>
+        <server name="DB_URL" value=""/>
+        <server name="DB_HOST" value=""/>
+        <server name="DB_PORT" value=""/>
+        <server name="DB_USERNAME" value=""/>
+        <server name="DB_PASSWORD" value=""/>
     </php>
 </phpunit>

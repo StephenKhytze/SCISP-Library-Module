@@ -1,3 +1,226 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ---------------------------------------------------------------------------
+   Entrance animations.
+
+   The components were written against tailwindcss-animate class names
+   (animate-in / fade-in / slide-in-from-* / zoom-in-*), but that plugin is not
+   installed, so every one of those classes was a no-op. Rather than pull in a
+   dependency for five keyframes, they are defined here and the components use
+   these explicit names.
+   --------------------------------------------------------------------------- */
+
+@keyframes lib-fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes lib-zoom-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lib-slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
+@keyframes lib-slide-in-right {
+  from {
+    opacity: 0;
+    transform: translateX(2rem);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lib-slide-up {
+  from {
+    transform: translateY(100%);
+  }
+
+  to {
+    transform: none;
+  }
+}
+
+.anim-fade-in {
+  animation: lib-fade-in 200ms ease-out both;
+}
+
+.anim-zoom-in {
+  animation: lib-zoom-in 200ms ease-out both;
+}
+
+.anim-slide-in-left {
+  animation: lib-slide-in-left 250ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.anim-slide-in-right {
+  animation: lib-slide-in-right 200ms ease-out both;
+}
+
+.anim-slide-up {
+  animation: lib-slide-up 300ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion.
+
+   Entrance animations are dropped entirely; skeleton pulsing stops; the busy
+   spinner is kept (it communicates "still working") but slowed right down.
+   --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+
+  .anim-fade-in,
+  .anim-zoom-in,
+  .anim-slide-in-left,
+  .anim-slide-in-right,
+  .anim-slide-up {
+    animation: none !important;
+  }
+
+  .animate-pulse {
+    animation: none !important;
+  }
+
+  .animate-spin {
+    animation-duration: 1.5s !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Keyboard focus.
+
+   Several controls set focus:outline-none without a replacement, which left
+   them invisible to keyboard users. This restores a visible ring for keyboard
+   navigation only (focus-visible), without bringing back the mouse-click
+   outline those rules were written to remove.
+   --------------------------------------------------------------------------- */
+
+:focus-visible {
+  outline: 2px solid #0f172a;
+  outline-offset: 2px;
+  border-radius: 0.375rem;
+}
+
+/* On the maroon chrome a dark ring is invisible — use a light one instead. */
+header :focus-visible,
+aside :focus-visible,
+.lib-drawer :focus-visible {
+  outline-color: #ffffff;
+}
+
+/* ---------------------------------------------------------------------------
+   Library Specific Utilities
+   --------------------------------------------------------------------------- */
+
+.lib-toggle {
+  position: relative;
+  display: inline-block;
+  width: 44px;
+  height: 24px;
+}
+
+.lib-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.lib-toggle span {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #cbd5e1;
+  transition: .15s ease-in-out;
+  border-radius: 24px;
+}
+
+.lib-toggle span:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: white;
+  transition: .15s ease-in-out;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+.lib-toggle input:checked + span {
+  background-color: #8B1A24;
+}
+
+.lib-toggle input:focus-visible + span {
+  outline: 2px solid #0f172a;
+  outline-offset: 2px;
+}
+
+.lib-toggle input:checked + span:before {
+  transform: translateX(20px);
+}
+
+.lib-field-prefix,
+.lib-field-suffix {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 0.6rem;
+  font-size: 11px;
+  font-weight: 700;
+  color: #64748b;
+  background-color: #f8fafc;
+  white-space: nowrap;
+}
+
+.lib-btn-press {
+  transition: transform 150ms ease, background-color 150ms ease, opacity 150ms ease;
+}
+
+.lib-btn-press:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lib-toggle span,
+  .lib-toggle span:before,
+  .lib-btn-press {
+    transition: none !important;
+  }
+}

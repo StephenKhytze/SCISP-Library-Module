@@ -15,7 +15,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // A single instance per request: the service caches resolved settings,
+        // and an update must invalidate the same cache every other service is
+        // reading from. Separate instances would each hold a stale copy.
+        $this->app->singleton(\App\Services\LibrarySettingsService::class);
     }
 
     /**

@@ -19,18 +19,7 @@ services:
     networks:
       - app-network
 
-  frontend:
-    build:
-      context: ./frontend
-    container_name: scisp_frontend
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    command: sh -c "npm install && npm run dev -- --host"
-    networks:
-      - app-network
+
 
   db:
     image: mysql:8.0

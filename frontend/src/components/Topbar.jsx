@@ -1,15 +1,28 @@
 import React, { useState } from 'react';
-import { Bell, GraduationCap, Check, Shield, Crown, UserCheck, Laptop, LogOut } from 'lucide-react';
+import { Bell, GraduationCap, Check, Shield, Crown, UserCheck, Laptop, LogOut, Menu } from 'lucide-react';
 
 export default function Topbar({
-  currentUser = { name: 'Juan Dela Cruz', role: 'Student', department: 'IT', idNumber: '12345' },
+  currentUser = { name: 'Juan Dela Cruz', username: 'DelaCruz_Juan_C1234', role: 'Student', department: 'IT', idNumber: '12345' },
   users = [
-    { name: 'Juan Dela Cruz', role: 'Student', department: 'IT', idNumber: '12345' },
-    { name: 'Admin User', role: 'Admin', department: 'Administration', idNumber: '00001' }
+    { name: 'Juan Dela Cruz', username: 'DelaCruz_Juan_C1234', role: 'Student', department: 'IT', idNumber: '12345' },
+    { name: 'Prof. Maria Santos', username: 'Santos_Maria_F12', role: 'Teacher', department: 'Computer Science', idNumber: 'T-987' },
+    { name: 'Admin User', username: 'Admin_User_00001', role: 'Admin', department: 'Administration', idNumber: '00001' },
+    { name: 'System Admin', username: 'SysAdmin_001', role: 'Super Admin', department: 'IT Operations', idNumber: 'SYS-01' },
+    // TEMPORARY QA personas — remove when the real Accounts/Auth module lands.
+    // Rows come from backend TemporaryQaUsersSeeder. idNumber must stay unique
+    // (it is the list key and the "current persona" marker).
+    { name: 'QA Student 1', username: 'qa_student_01', role: 'Student', department: 'QA', idNumber: 'QA-S01' },
+    { name: 'QA Student 2', username: 'qa_student_02', role: 'Student', department: 'QA', idNumber: 'QA-S02' },
+    { name: 'QA Student 3', username: 'qa_student_03', role: 'Student', department: 'QA', idNumber: 'QA-S03' },
+    { name: 'QA Faculty 1', username: 'qa_faculty_01', role: 'Faculty', department: 'QA', idNumber: 'QA-F01' },
+    { name: 'QA Faculty 2', username: 'qa_faculty_02', role: 'Faculty', department: 'QA', idNumber: 'QA-F02' },
+    { name: 'QA Admin', username: 'qa_admin_01', role: 'Admin', department: 'QA', idNumber: 'QA-A01' },
+    { name: 'QA Super Admin', username: 'qa_superadmin_01', role: 'Super Admin', department: 'QA', idNumber: 'QA-SA01' },
   ],
   onSelectUser = () => {},
   onOpenTechSpec = () => {},
   onLogout = () => {},
+  onOpenMobileNav = () => {},
 }) {
   const [showNotifications, setShowNotifications] = useState(false);
   const [showUserDropdown, setShowUserDropdown] = useState(false);
@@ -21,9 +34,17 @@ export default function Topbar({
   ];
 
   return (
-    <header className="h-[86px] bg-[#80172B] text-white flex items-center justify-between pr-8 select-none relative z-30 shadow-md border-b-2 border-[#651020]" style={{ paddingLeft: '32px' }}>
-      {/* Left: ABC SCHOOL Brand Logo */}
+    <header className="h-[86px] bg-[#80172B] text-white flex items-center justify-between px-4 lg:px-8 select-none relative z-30 shadow-md border-b-2 border-[#651020]" style={{ paddingLeft: 'max(16px, env(safe-area-inset-left))' }}>
+      {/* Left: Hamburger (Mobile) + ABC SCHOOL Brand Logo */}
       <div className="flex items-center space-x-3">
+        <button 
+          onClick={onOpenMobileNav}
+          className="lg:hidden p-2 -ml-2 text-white hover:bg-white/10 rounded-full transition-colors"
+          aria-label="Open mobile menu"
+        >
+          <Menu className="w-6 h-6" />
+        </button>
+
         <div className="flex items-center cursor-pointer group" onClick={() => window.location.reload()}>
           {/* ABC SCHOOL Emblem Replica matching template */}
           <div className="relative flex items-center">
@@ -47,8 +68,10 @@ export default function Topbar({
               setShowNotifications(!showNotifications);
               setShowUserDropdown(false);
             }}
-            className="p-2 hover:bg-white/10 rounded-full transition-colors relative cursor-pointer focus:outline-none focus:ring-2 focus:ring-white/30"
+            className="p-2 hover:bg-white/10 rounded-full transition-colors relative cursor-pointer"
             aria-label="Notifications"
+            aria-haspopup="true"
+            aria-expanded={showNotifications}
           >
             <Bell className="w-6 h-6 text-white fill-white" />
             {/* Notification gold badge matching image */}
@@ -57,7 +80,7 @@ export default function Topbar({
 
           {/* Notifications Dropdown */}
           {showNotifications && (
-            <div className="absolute right-0 mt-2 w-80 bg-white text-gray-800 rounded-lg shadow-xl border border-gray-200 py-2 z-50 text-xs animate-in fade-in duration-150">
+            <div className="absolute right-0 mt-2 w-80 bg-white text-gray-800 rounded-lg shadow-xl border border-gray-200 py-2 z-50 text-xs anim-fade-in">
               <div className="px-3 py-2 border-b border-gray-100 flex items-center justify-between font-semibold text-gray-700">
                 <span>Notifications</span>
                 <span className="bg-[#80172B]/10 text-[#80172B] px-1.5 py-0.5 rounded text-[10px]">
@@ -102,13 +125,16 @@ export default function Topbar({
               setShowUserDropdown(!showUserDropdown);
               setShowNotifications(false);
             }}
-            className="flex items-center space-x-4 group hover:opacity-95 transition-opacity focus:outline-none"
+            className="flex items-center space-x-4 group hover:opacity-95 transition-opacity"
             title="Switch User Role / View Profile"
+            aria-label="Account and role switcher"
+            aria-haspopup="true"
+            aria-expanded={showUserDropdown}
           >
             {/* Persona Name & Role */}
-            <div className="text-right flex flex-col justify-center leading-tight">
+            <div className="hidden sm:flex text-right flex-col justify-center leading-tight">
               <span className="font-bold text-base tracking-wide text-white group-hover:text-amber-100 transition-colors">
-                {currentUser.name}
+                {currentUser.name || currentUser.username}
               </span>
               <span className="text-[12px] text-white/80 font-normal">
                 {currentUser.role}
@@ -123,11 +149,11 @@ export default function Topbar({
 
           {/* User Profile & Role Switcher Popup */}
           {showUserDropdown && (
-            <div className="absolute right-0 mt-2 w-64 bg-white text-gray-800 rounded-lg shadow-xl border border-gray-200 py-2 z-50 animate-in fade-in duration-150">
+            <div className="absolute right-0 mt-2 w-64 bg-white text-gray-800 rounded-lg shadow-xl border border-gray-200 py-2 z-50 anim-fade-in">
               <div className="px-4 py-2.5 border-b border-gray-100 bg-gray-50/80">
-                <p className="text-xs font-semibold text-gray-900">{currentUser.name}</p>
-                <p className="text-[11px] text-gray-500">{currentUser.department}</p>
-                <p className="text-[10px] text-[#80172B] font-mono mt-0.5">ID: {currentUser.idNumber}</p>
+                <p className="text-xs font-semibold text-gray-900">{currentUser.name || currentUser.username}</p>
+                <p className="text-[11px] text-gray-500">{currentUser.department || currentUser.role}</p>
+                <p className="text-[10px] text-[#80172B] font-mono mt-0.5">ID: {currentUser.idNumber || currentUser.username || "—"}</p>
               </div>
 
               <div className="px-3 py-1.5 text-[10px] uppercase font-bold text-gray-400 tracking-wider">

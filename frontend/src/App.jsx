@@ -8,6 +8,17 @@ import StudentProfile from './modules/student_info/StudentProfile';
 import FacultyList from './modules/faculty/FacultyList';
 import Login from './modules/auth/Login';
 
+// Auto-inject temporary guest credentials to bypass login
+if (!localStorage.getItem('access_token')) {
+  localStorage.setItem('access_token', 'temp_guest_token');
+  localStorage.setItem('user', JSON.stringify({
+    username: 'guest',
+    first_name: 'Guest',
+    last_name: 'User',
+    role: 'student'
+  }));
+}
+
 function ProtectedRoute({ children }) {
   const token = localStorage.getItem('access_token');
   return token ? children : <Navigate to="/auth" replace />;
@@ -24,7 +35,7 @@ function App() {
       <Routes>
         {/* Auth Route without Layout */}
         <Route path="/auth" element={<PublicRoute><Login /></PublicRoute>} />
-        
+
         {/* Main Routes wrapped in the template Layout */}
         <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
           <Route index element={<Dashboard />} />
