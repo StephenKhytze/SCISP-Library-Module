@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import api from '../../api';
+import api from '../services/api';
 import StatusBadge from './StatusBadge';
-import { useToast } from './ToastProvider';
-import { useConfirm } from './ConfirmDialog';
-import useDialog from './useDialog';
+import { useToast } from '../ToastProvider';
+import { useConfirm } from '../ConfirmDialog';
+import useDialog from '../hooks/useDialog';
 
 import { Search, X } from 'lucide-react';
 

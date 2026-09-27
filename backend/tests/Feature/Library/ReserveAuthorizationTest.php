@@ -37,7 +37,7 @@ uses(RefreshDatabase::class);
 | in-memory SQLite connection that phpunit.xml forces for tests.
 */
 
-/** Mirrors the headers frontend/src/api.js sends. */
+/** Mirrors the headers frontend/src/modules/library/services/api.js sends. */
 function reserveAuthAs(string $role, string $username): array
 {
     return [

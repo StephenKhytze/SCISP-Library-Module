@@ -1,5 +1,5 @@
 import React from 'react';
-import useDialog from './useDialog';
+import useDialog from '../hooks/useDialog';
 
 export default function ClassmatesModal({ open, sectionName, classmates, onClose }) {
   const panelRef = useDialog(open, onClose);

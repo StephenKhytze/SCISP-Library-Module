@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import api from '../../api';
-import useDialog from './useDialog';
+import api from '../services/api';
+import useDialog from '../hooks/useDialog';
 
 /**
  * Librarian fine settlement.

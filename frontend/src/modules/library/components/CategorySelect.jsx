@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import api from '../../api';
-import { useToast } from './ToastProvider';
-import useDialog from './useDialog';
+import api from '../services/api';
+import { useToast } from '../ToastProvider';
+import useDialog from '../hooks/useDialog';
 import { Loader2 } from 'lucide-react';
 
 /**

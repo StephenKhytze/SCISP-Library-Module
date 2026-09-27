@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import api from '../../api';
-import { useToast } from './ToastProvider';
-import { useConfirm } from './ConfirmDialog';
+import api from '../services/api';
+import { useToast } from '../ToastProvider';
+import { useConfirm } from '../ConfirmDialog';
 import { Save } from 'lucide-react';
 
 /**

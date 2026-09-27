@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import api from '../../api';
+import api from '../services/api';
 import StatusBadge from './StatusBadge';
-import useDialog from './useDialog';
-import { useToast } from './ToastProvider';
-import { useConfirm } from './ConfirmDialog';
+import useDialog from '../hooks/useDialog';
+import { useToast } from '../ToastProvider';
+import { useConfirm } from '../ConfirmDialog';
 import CategorySelect from './CategorySelect';
 import AddBookForm from './AddBookForm';
 

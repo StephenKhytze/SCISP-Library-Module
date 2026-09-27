@@ -1,20 +1,19 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
-import api from '../../api';
-import TeacherReservesView from './TeacherReservesView';
-import AdminFinesPanel from './AdminFinesPanel';
-import AdminInventoryPanel from './AdminInventoryPanel';
-import HoldQueuePanel from './HoldQueuePanel';
-import RenewalRequestsPanel from './RenewalRequestsPanel';
-import LibrarySettingsPanel from './LibrarySettingsPanel';
-import StudentCourseReserveCard from './StudentCourseReserveCard';
-import AdminReserveCard from './AdminReserveCard';
-import ClassmatesModal from './ClassmatesModal';
-import StatusBadge from './StatusBadge';
-import AddBookForm from './AddBookForm';
-import CategorySelect from './CategorySelect';
+import api from './services/api';
+import TeacherReservesView from './components/TeacherReservesView';
+import AdminFinesPanel from './components/AdminFinesPanel';
+import AdminInventoryPanel from './components/AdminInventoryPanel';
+import HoldQueuePanel from './components/HoldQueuePanel';
+import RenewalRequestsPanel from './components/RenewalRequestsPanel';
+import LibrarySettingsPanel from './components/LibrarySettingsPanel';
+import StudentCourseReserveCard from './components/StudentCourseReserveCard';
+import AdminReserveCard from './components/AdminReserveCard';
+import ClassmatesModal from './components/ClassmatesModal';
+import StatusBadge from './components/StatusBadge';
+import CategorySelect from './components/CategorySelect';
 import { useToast } from './ToastProvider';
 import { useConfirm } from './ConfirmDialog';
-import useDialog from './useDialog';
+import useDialog from './hooks/useDialog';
 import { Loader2, Package, Settings, BookOpen } from 'lucide-react';
 
 /**
@@ -113,7 +112,6 @@ export default function LibraryPortal() {
 
   // Modals
   const [selectedBook, setSelectedBook] = useState(null);
-  const [showAddBookModal, setShowAddBookModal] = useState(false);
 
   // New Book Form State
   const [newBook, setNewBook] = useState({
