@@ -122,8 +122,16 @@ export default function LibrarySettingsPanel() {
 
   const hasChanges = ALL_FIELDS.some(f => !same(settings[f.k], original[f.k]));
 
-  const discardChanges = () => {
-    setSettings(original);
+    const discardChanges = async () => {
+    const ok = await confirm({
+      title: 'Discard Changes?',
+      message: 'Are you sure you want to discard your unsaved policy changes?',
+      confirmText: 'Discard Changes',
+      isDestructive: true
+    });
+    if (ok) {
+      setSettings({...original});
+    }
   };
 
   const save = async () => {

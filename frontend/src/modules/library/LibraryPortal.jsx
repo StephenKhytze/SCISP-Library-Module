@@ -1759,27 +1759,9 @@ export default function LibraryPortal() {
 
               {manageSection === 'inventory' && (
                 <>
-              <AdminInventoryPanel books={books} onChanged={refreshCurrent} />
+              <AdminInventoryPanel books={books} onChanged={refreshCurrent} onAddTitle={() => setShowAddBookModal(true)} />
               <div className="h-4" />
-              <div className="bg-white rounded-[2rem] p-5 sm:p-6 shadow-sm border border-slate-100 mt-2">
-                <div className="mb-5 border-b border-slate-100 pb-4">
-                  <span className="inline-block bg-slate-100 text-slate-600 border border-slate-200 text-[9px] font-black uppercase px-2 py-0.5 rounded tracking-wider mb-2">
-                    LIBRARY INVENTORY
-                  </span>
-                  <h2 className="text-[18px] font-black text-[#0f172a] leading-tight">Register New Title</h2>
-                </div>
-
-                <AddBookForm 
-                  newBook={newBook} 
-                  setNewBook={setNewBook} 
-                  handleAddBook={handleAddBook} 
-                  onCancel={() => setActiveTab('catalog')} 
-                  actionBusy={actionBusy}
-                categories={categories}
-                onCategoriesChanged={registerCategory}
-                canManageCategories={isLibrarian}
-                />
-              </div>
+              
                 </>
               )}
             </>
@@ -2760,32 +2742,9 @@ export default function LibraryPortal() {
 
               {manageSection === 'inventory' && (
                 <>
-              <AdminInventoryPanel books={books} onChanged={refreshCurrent} />
+              <AdminInventoryPanel books={books} onChanged={refreshCurrent} onAddTitle={() => setShowAddBookModal(true)} />
               <div className="h-4" />
-              <div className="max-w-2xl mx-auto w-full bg-white rounded-[1.25rem] p-6 sm:p-8 shadow-xs border border-slate-200/70">
-                <div className="mb-6 pb-4 border-b border-slate-100 text-center">
-                  <span className="inline-block bg-slate-100 text-slate-600 border border-slate-200 text-[9.5px] font-black uppercase px-2.5 py-1 rounded tracking-wider mb-2">
-                    LIBRARY INVENTORY
-                  </span>
-                  <h2 className="text-[20px] font-extrabold text-[#0f172a] leading-tight">
-                    Register New Title
-                  </h2>
-                  <p className="text-slate-400 text-[11.5px] font-medium mt-1">
-                    Enter complete book bibliographic details and initial physical copy inventory.
-                  </p>
-                </div>
-
-                <AddBookForm 
-                  newBook={newBook} 
-                  setNewBook={setNewBook} 
-                  handleAddBook={handleAddBook} 
-                  onCancel={() => setActiveTab('catalog')} 
-                  actionBusy={actionBusy}
-                categories={categories}
-                onCategoriesChanged={registerCategory}
-                canManageCategories={isLibrarian}
-                />
-              </div>
+              
                 </>
               )}
             </>
@@ -2798,6 +2757,20 @@ export default function LibraryPortal() {
       {/* ========================================================================= */}
 
       {/* Modal: View Copies & Physical RFID Status */}
+        <AddBookForm 
+          isOpen={showAddBookModal}
+          newBook={newBook} 
+          setNewBook={setNewBook} 
+          handleAddBook={async (e) => {
+            await handleAddBook(e);
+            setShowAddBookModal(false);
+          }} 
+          onCancel={() => setShowAddBookModal(false)} 
+          actionBusy={actionBusy}
+          categories={categories}
+          onCategoriesChanged={registerCategory}
+          canManageCategories={isLibrarian}
+        />
       {selectedBook && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
           <div

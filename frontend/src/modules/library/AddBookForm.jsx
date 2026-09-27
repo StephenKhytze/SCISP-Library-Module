@@ -1,8 +1,11 @@
 import React from 'react';
-import { Loader2 } from 'lucide-react';
+import { Loader2, X } from 'lucide-react';
+import { useEffect } from 'react';
 import CategorySelect from './CategorySelect';
 
 export default function AddBookForm({
+  isOpen,
+
   newBook,
   setNewBook,
   handleAddBook,
@@ -12,8 +15,49 @@ export default function AddBookForm({
   onCategoriesChanged,
   canManageCategories = false,
 }) {
+  useEffect(() => {
+    if (isOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = 'unset';
+    }
+    return () => {
+      document.body.style.overflow = 'unset';
+    };
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
   return (
-    <form onSubmit={handleAddBook} className="flex flex-col gap-5 w-full">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6">
+      <div 
+        className="absolute inset-0 bg-black/50 backdrop-blur-sm anim-fade-in" 
+        onClick={onCancel}
+        aria-hidden="true"
+      />
+      <div 
+        className="relative z-10 bg-white rounded-2xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[90vh] overflow-hidden anim-zoom-in"
+        role="dialog"
+        aria-modal="true"
+      >
+        <div className="flex items-center justify-between p-5 sm:p-6 border-b border-slate-100 shrink-0">
+          <div>
+            <h2 className="text-[18px] font-black text-[#0f172a] leading-tight">Register New Title</h2>
+            <p className="text-slate-400 text-[11px] font-medium mt-1">
+              Enter complete book bibliographic details and initial physical copy inventory.
+            </p>
+          </div>
+          <button 
+            onClick={onCancel}
+            type="button"
+            className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="p-5 sm:p-6 overflow-y-auto">
+          <form onSubmit={handleAddBook} className="flex flex-col gap-5 w-full">
       {/* BASIC DETAILS */}
       <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col gap-4">
         <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Basic Details</h3>
@@ -159,6 +203,9 @@ export default function AddBookForm({
           {actionBusy === 'add-book' ? <><Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5 inline-block" />Saving...</> : 'Register Title & Copies'}
         </button>
       </div>
-    </form>
+              </form>
+        </div>
+      </div>
+    </div>
   );
 }
