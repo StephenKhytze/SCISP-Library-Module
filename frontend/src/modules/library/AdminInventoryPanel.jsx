@@ -713,6 +713,20 @@ export default function AdminInventoryPanel({
           </div>
         </div>
       )}
+      <AddBookForm 
+        isOpen={isAddBookOpen}
+        newBook={newBook}
+        setNewBook={setNewBook}
+        handleAddBook={async (e) => {
+          await handleAddBook(e);
+          setIsAddBookOpen(false);
+        }}
+        onCancel={() => setIsAddBookOpen(false)}
+        actionBusy={actionBusy}
+        categories={categories}
+        onCategoriesChanged={onCategoriesChanged}
+        canManageCategories={canManageCategories}
+      />
     </div>
   );
 }

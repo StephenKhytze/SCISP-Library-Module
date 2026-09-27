@@ -7,7 +7,17 @@ export default function Topbar({
     { name: 'Juan Dela Cruz', username: 'DelaCruz_Juan_C1234', role: 'Student', department: 'IT', idNumber: '12345' },
     { name: 'Prof. Maria Santos', username: 'Santos_Maria_F12', role: 'Teacher', department: 'Computer Science', idNumber: 'T-987' },
     { name: 'Admin User', username: 'Admin_User_00001', role: 'Admin', department: 'Administration', idNumber: '00001' },
-    { name: 'System Admin', username: 'SysAdmin_001', role: 'Super Admin', department: 'IT Operations', idNumber: 'SYS-01' }
+    { name: 'System Admin', username: 'SysAdmin_001', role: 'Super Admin', department: 'IT Operations', idNumber: 'SYS-01' },
+    // TEMPORARY QA personas — remove when the real Accounts/Auth module lands.
+    // Rows come from backend TemporaryQaUsersSeeder. idNumber must stay unique
+    // (it is the list key and the "current persona" marker).
+    { name: 'QA Student 1', username: 'qa_student_01', role: 'Student', department: 'QA', idNumber: 'QA-S01' },
+    { name: 'QA Student 2', username: 'qa_student_02', role: 'Student', department: 'QA', idNumber: 'QA-S02' },
+    { name: 'QA Student 3', username: 'qa_student_03', role: 'Student', department: 'QA', idNumber: 'QA-S03' },
+    { name: 'QA Faculty 1', username: 'qa_faculty_01', role: 'Faculty', department: 'QA', idNumber: 'QA-F01' },
+    { name: 'QA Faculty 2', username: 'qa_faculty_02', role: 'Faculty', department: 'QA', idNumber: 'QA-F02' },
+    { name: 'QA Admin', username: 'qa_admin_01', role: 'Admin', department: 'QA', idNumber: 'QA-A01' },
+    { name: 'QA Super Admin', username: 'qa_superadmin_01', role: 'Super Admin', department: 'QA', idNumber: 'QA-SA01' },
   ],
   onSelectUser = () => {},
   onOpenTechSpec = () => {},

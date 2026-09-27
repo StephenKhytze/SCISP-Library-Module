@@ -813,6 +813,7 @@ export default function LibraryPortal() {
     ? (summary.role === 'faculty' ? '14' : summary.role === 'administrator' ? '30' : '7')
     : null;
 
+  
   const handleViewClassmates = async (reserve) => {
     setClassmatesFor(reserve);
     setClassmates(undefined);
@@ -2995,6 +2996,17 @@ export default function LibraryPortal() {
           </div>
         </div>
       )}
+
+      {/* Modal: View Classmates */}
+      <ClassmatesModal
+        open={!!classmatesFor}
+        sectionName={classmatesFor?.course || ''}
+        classmates={classmates}
+        onClose={() => {
+          setClassmatesFor(null);
+          setClassmates(undefined);
+        }}
+      />
 
       {refreshing && (
         <div
