@@ -143,6 +143,7 @@ class CirculationController extends Controller
         $dbRole = $this->circulationService->normalizeRole($user->role ?? 'student');
         $isSuperAdmin = $user && $user->isSuperAdmin();
         $canBorrow = $user ? $user->canBorrow() : false;
+        $borrowingEnabled = $canBorrow ? app(\App\Services\LibrarySettingsService::class)->borrowingEnabledFor($dbRole) : false;
 
         // A management-only account has no borrowing limit because it has no
         // borrowing at all; null here would read as "unlimited".
@@ -168,6 +169,7 @@ class CirculationController extends Controller
             // the only thing that separates them for the client.
             'is_super_admin' => $isSuperAdmin,
             'can_borrow' => $canBorrow,
+            'borrowing_enabled' => $borrowingEnabled,
             'total_fines' => round((float) ($user->total_fines ?? 0), 2),
             'active_loans' => $activeLoans,
             'overdue_loans' => $overdueLoans,

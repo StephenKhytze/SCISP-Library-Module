@@ -624,7 +624,7 @@ export default function LibraryPortal() {
     }
   });
 
-  const handleAddBook = async (e) => {
+  const handleAddBook = async (e, onSuccess) => {
     e.preventDefault();
     if (!newBook.title || !newBook.author || !newBook.isbn) {
       toast.warning('Please fill in required fields (Title, Author, ISBN).');
@@ -676,7 +676,7 @@ export default function LibraryPortal() {
         location: 'Floor 2 - Shelf CS-101',
         isCourseReserve: false
       });
-      setShowAddBookModal(false);
+      if (onSuccess) onSuccess();
       toast.success(`Book "${formatted.title}" successfully added to the catalog!`);
       setActiveTab('catalog');
     } catch (err) {
@@ -715,7 +715,7 @@ export default function LibraryPortal() {
               quantity: parseInt(newBook.copies, 10) || 1,
             });
             toast.success(`Copies added to "${existing.book_title}".`);
-            setShowAddBookModal(false);
+            if (onSuccess) onSuccess();
             setActiveTab('catalog');
             refreshCurrent();
           } catch (copyErr) {
@@ -853,7 +853,7 @@ export default function LibraryPortal() {
       {/* ========================================================================= */}
       {/* 📱 MOBILE VIEW (< lg): Retains Exact Original Mobile Layout               */}
       {/* ========================================================================= */}
-      <div className="flex flex-col gap-6 w-full max-w-md sm:max-w-xl md:max-w-3xl mx-auto p-4 md:p-6 lg:hidden">
+      <div className="flex flex-col gap-6 w-full max-w-md sm:max-w-xl md:max-w-3xl mx-auto p-6 md:p-6 lg:hidden">
 
         {/* 1. Main Info Card */}
         <div className="bg-white rounded-[2rem] p-6 shadow-sm border border-gray-100">
@@ -873,7 +873,7 @@ export default function LibraryPortal() {
 
           {/* Borrowing Rule Inner Card */}
           <div className="border border-gray-100 shadow-sm rounded-2xl p-5 relative overflow-hidden bg-white">
-            <div className="absolute right-6 top-4 bottom-4 w-px bg-gray-100"></div>
+            <div className="absolute right-6 top-6 bottom-4 w-px bg-gray-100"></div>
 
             <div className="mb-4">
               <h3 className="text-[10px] font-bold text-gray-400 tracking-wider uppercase mb-1">Your Borrowing Rule</h3>
@@ -907,7 +907,7 @@ export default function LibraryPortal() {
         <div className="flex flex-col gap-3">
           {loading ? (
             Array.from({ length: isLibrarian ? 5 : 3 }).map((_, i) => (
-              <div key={i} className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100 animate-pulse">
+              <div key={i} className="bg-white rounded-[1.25rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100 animate-pulse">
                 <div className="w-12 h-12 rounded-xl bg-gray-200 shrink-0"></div>
                 <div className="flex flex-col gap-1.5 w-full py-1">
                   <div className="h-2.5 bg-gray-200 rounded w-1/2"></div>
@@ -918,7 +918,7 @@ export default function LibraryPortal() {
           ) : (
             <>
               {/* Total Titles */}
-              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+              <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
                 <div className="w-12 h-12 rounded-xl bg-gray-100 flex items-center justify-center text-gray-500 shrink-0">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
@@ -931,7 +931,7 @@ export default function LibraryPortal() {
               </div>
 
               {/* Available */}
-              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+              <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
                 <div className="w-12 h-12 rounded-xl bg-green-50 border border-green-100 flex items-center justify-center text-green-500 shrink-0">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -946,7 +946,7 @@ export default function LibraryPortal() {
               </div>
 
               {/* Checked Out */}
-              <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+              <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
                 <div className="w-12 h-12 rounded-xl bg-orange-50 border border-orange-100 flex items-center justify-center text-orange-400 shrink-0">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -963,7 +963,7 @@ export default function LibraryPortal() {
 
               {/* Overdue Copies (Only on SuperAdmin and Admin) */}
               {isLibrarian && (
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
                   <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-red-500 shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-6 h-6">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -978,7 +978,7 @@ export default function LibraryPortal() {
 
               {/* Total System Fines (Only on SuperAdmin and Admin) */}
               {isLibrarian && (
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-4 shadow-sm border border-gray-100">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-6 shadow-sm border border-gray-100">
                   <div className="w-12 h-12 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center text-[#8B1A24] shrink-0 font-extrabold text-lg">
                     ₱
                   </div>
@@ -995,7 +995,7 @@ export default function LibraryPortal() {
         {/* 3. Navigation Buttons & Admin Quick Actions Card (Mobile) */}
         <div className="bg-white rounded-[1.5rem] p-3.5 shadow-sm border border-gray-100 flex flex-col gap-3.5">
           {/* Row 1: 3 Core Tabs for Everyone */}
-          <div className="flex gap-2.5">
+          <div className="flex gap-4">
             <button
               onClick={() => setActiveTab('catalog')}
               className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'catalog'
@@ -1057,7 +1057,7 @@ export default function LibraryPortal() {
             <>
               <div className="w-full border-t-2 border-dashed border-gray-100"></div>
 
-              <div className="flex gap-2.5">
+              <div className="flex gap-4">
                 <button
                   onClick={() => setActiveTab('circulation')}
                   className={`flex-1 flex flex-col items-center justify-center py-3.5 px-2 rounded-[1.25rem] transition-all duration-200 cursor-pointer ${activeTab === 'circulation'
@@ -1112,7 +1112,7 @@ export default function LibraryPortal() {
         </div>
 
         {/* 4. Active Tab Content for Mobile */}
-        <div className="flex flex-col gap-4 w-full">
+        <div className="flex flex-col gap-6 w-full">
           {activeTab === 'catalog' && (
             <>
               {/* 5. Search & Filter Section (Mobile) */}
@@ -1164,8 +1164,8 @@ export default function LibraryPortal() {
               <div className="flex flex-col gap-3 mt-2">
                 {loading ? (
                   Array.from({ length: 3 }).map((_, i) => (
-                    <div key={i} className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-gray-100 flex flex-col gap-4 animate-pulse">
-                      <div className="flex gap-4">
+                    <div key={i} className="bg-white rounded-[1.5rem] p-6 shadow-sm border border-gray-100 flex flex-col gap-6 animate-pulse">
+                      <div className="flex gap-6">
                         <div className="w-[88px] h-[104px] shrink-0 rounded-xl bg-gray-200"></div>
                         <div className="flex flex-col flex-1 gap-2 py-1">
                           <div className="h-3 bg-gray-200 rounded w-1/3 mb-1"></div>
@@ -1193,8 +1193,8 @@ export default function LibraryPortal() {
                   </div>
                 ) : (
                   filteredBooks.map(book => (
-                    <div key={book.id} className="bg-white rounded-[1.5rem] p-4 shadow-sm border border-gray-100 flex flex-col gap-4">
-                      <div className="flex gap-4">
+                    <div key={book.id} className="bg-white rounded-[1.5rem] p-6 shadow-sm border border-gray-100 flex flex-col gap-6">
+                      <div className="flex gap-6">
                         <div className="w-[72px] aspect-[3/4] shrink-0 rounded-xl overflow-hidden shadow-sm border border-slate-200 bg-slate-100 flex items-center justify-center relative">
                           <BookCover src={book.image} alt={book.title} />
                         </div>
@@ -1242,7 +1242,7 @@ export default function LibraryPortal() {
               {/* Pagination on phones and tablets too — the catalog is not
                   limited to the first page here either. */}
               {pagination.last_page > 1 && (
-                <div className="bg-white rounded-[1.5rem] px-5 py-3.5 shadow-sm border border-gray-100 flex flex-col gap-2.5 items-center">
+                <div className="bg-white rounded-[1.5rem] px-5 py-3.5 shadow-sm border border-gray-100 flex flex-col gap-4 items-center">
                   <span className="text-[11.5px] font-semibold text-slate-500">
                     Page {pagination.current_page} of {pagination.last_page} · {catalogCount} titles
                   </span>
@@ -1303,7 +1303,7 @@ export default function LibraryPortal() {
                     {myLoans.map(loan => (
                       <div
                         key={loan.transaction_id}
-                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 text-left shadow-xs cursor-pointer hover:border-emerald-300 transition-colors"
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-6 text-left shadow-xs cursor-pointer hover:border-emerald-300 transition-colors"
                         onClick={() => {
                           const foundBook = books.find(b => b.id === loan.book_copy?.book_id);
                           if (foundBook) setSelectedBook(foundBook);
@@ -1354,7 +1354,7 @@ export default function LibraryPortal() {
                   </p>
                 </div>
 
-                <div className="border border-[#bae6fd] bg-[#f0f9ff] rounded-[1rem] p-4 text-left flex gap-3 items-start">
+                <div className="border border-[#bae6fd] bg-[#f0f9ff] rounded-[1rem] p-6 text-left flex gap-3 items-start">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 shrink-0 text-[#0284c7]">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                   </svg>
@@ -1390,7 +1390,7 @@ export default function LibraryPortal() {
                     </p>
                   </div>
                 ) : (
-                  <div className="flex flex-col gap-2.5 mb-3">
+                  <div className="flex flex-col gap-4 mb-3">
                     {myHolds.map(hold => (
                       <div key={hold.id} className="border border-gray-200 rounded-[1.25rem] p-3.5 bg-white text-left">
                         <div className="flex items-start justify-between gap-2 mb-1">
@@ -1416,7 +1416,7 @@ export default function LibraryPortal() {
                   </div>
                 )}
 
-                <div className="border border-amber-200 bg-[#fffbeb] rounded-[1rem] p-4 text-left flex gap-3 items-start">
+                <div className="border border-amber-200 bg-[#fffbeb] rounded-[1rem] p-6 text-left flex gap-3 items-start">
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5 shrink-0 text-[#b45309]">
                     <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296A3.745 3.745 0 013 12c0-1.268.63-2.39 1.593-3.068a3.745 3.745 0 011.043-3.296 3.746 3.746 0 013.296-1.043A3.746 3.746 0 0112 3c1.268 0 2.39.63 3.068 1.593a3.746 3.746 0 013.296 1.043 3.746 3.746 0 0121 12z" />
                   </svg>
@@ -1442,7 +1442,7 @@ export default function LibraryPortal() {
                     You have not borrowed anything yet.
                   </p>
                 ) : (
-                  <div className="flex flex-col gap-2.5">
+                  <div className="flex flex-col gap-4">
                     {myHistory.map(t => (
                       <div key={t.transaction_id} className="border border-gray-200 rounded-[1.25rem] p-3.5 bg-white shadow-sm">
                         <div className="flex items-start justify-between gap-2 mb-1">
@@ -1505,7 +1505,7 @@ export default function LibraryPortal() {
                     {loading ? (
                       <div className="flex flex-col gap-3">
                         {Array.from({ length: 2 }).map((_, i) => (
-                          <div key={i} className="border border-slate-200 rounded-[1.25rem] p-4 animate-pulse">
+                          <div key={i} className="border border-slate-200 rounded-[1.25rem] p-6 animate-pulse">
                             <div className="h-3 bg-slate-200 rounded w-1/3 mb-3"></div>
                             <div className="h-4 bg-slate-200 rounded w-2/3 mb-2"></div>
                             <div className="h-2.5 bg-slate-100 rounded w-1/2"></div>
@@ -1538,6 +1538,7 @@ export default function LibraryPortal() {
                               reserve={reserve}
                               onViewClassmates={handleViewClassmates}
                               onRequestBorrow={handleRequestReserveCopy}
+                              borrowingEnabled={summary?.borrowing_enabled !== false}
                             />
                           )
                         ))}
@@ -1563,7 +1564,7 @@ export default function LibraryPortal() {
               </div>
 
               {/* Mobile Checkout Form */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-6">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-6">
                 <h3 className="font-extrabold text-[13px] text-[#0f172a] mb-3">Check-Out Book Copy</h3>
                 <form className="flex flex-col gap-3" onSubmit={(e) => {
                   handleCheckout(e, checkoutData.userId, checkoutData.copyId);
@@ -1598,7 +1599,7 @@ export default function LibraryPortal() {
               </div>
 
               {/* Same search and scope controls the desktop desk has. */}
-              <div className="flex flex-col gap-2.5 mb-4">
+              <div className="flex flex-col gap-4 mb-4">
                 <input
                   type="text"
                   placeholder="Search by borrower ID, name, copy, or title…"
@@ -1625,9 +1626,9 @@ export default function LibraryPortal() {
               </div>
 
               {loading ? (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-6">
                   {Array.from({ length: 2 }).map((_, i) => (
-                    <div key={i} className="border border-gray-200 rounded-[1.25rem] p-4 animate-pulse">
+                    <div key={i} className="border border-gray-200 rounded-[1.25rem] p-6 animate-pulse">
                       <div className="h-3.5 bg-gray-200 rounded w-2/3 mb-3"></div>
                       <div className="h-2.5 bg-gray-100 rounded w-1/2 mb-4"></div>
                       <div className="h-9 bg-gray-100 rounded-xl w-full"></div>
@@ -1646,9 +1647,9 @@ export default function LibraryPortal() {
                   </p>
                 </div>
               ) : (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-6">
                   {filteredCirculation.map(item => (
-                    <div key={item.id} className="border border-gray-200 rounded-[1.25rem] p-4 flex flex-col gap-3 bg-white">
+                    <div key={item.id} className="border border-gray-200 rounded-[1.25rem] p-6 flex flex-col gap-3 bg-white">
                       <div className="flex justify-between items-start gap-2">
                         <div className="min-w-0">
                           <h3 className="font-extrabold text-[13px] text-[#0f172a] leading-tight mb-1">{item.title}</h3>
@@ -1702,7 +1703,7 @@ export default function LibraryPortal() {
 
           {/* Admin Fines & Queue (Mobile) - Only on SuperAdmin and Admin */}
           {activeTab === 'fines' && isLibrarian && (
-            <div className="flex flex-col gap-4 mt-2">
+            <div className="flex flex-col gap-6 mt-2">
               <RenewalRequestsPanel
                 requests={pendingRenewals}
                 onDecide={handleDecideRenewal}
@@ -1780,7 +1781,7 @@ export default function LibraryPortal() {
       {/* ========================================================================= */}
       {/* 🖥️ DESKTOP VIEW (lg:): Dashboard Mode Exactly Matching User Mockup       */}
       {/* ========================================================================= */}
-      <div className="hidden lg:flex lg:flex-col gap-4.5 w-full max-w-7xl mx-auto p-4">
+      <div className="hidden lg:flex lg:flex-col gap-8 w-full max-w-7xl mx-auto p-6">
 
         {/* 1. Desktop Header Card */}
         <div className="bg-white rounded-[1.25rem] p-5 lg:p-6 shadow-xs border border-slate-200/70">
@@ -1799,7 +1800,7 @@ export default function LibraryPortal() {
           </p>
 
           {/* Borrowing Rule Inner Box (3 Columns) */}
-          <div className="border border-slate-200/80 rounded-xl p-4 bg-white grid grid-cols-1 md:grid-cols-3 gap-4 divide-y md:divide-y-0 md:divide-x divide-slate-100">
+          <div className="border border-slate-200/80 rounded-xl p-6 bg-white grid grid-cols-1 md:grid-cols-3 gap-6 divide-y md:divide-y-0 md:divide-x divide-slate-100">
             <div className="md:pr-4">
               <h3 className="text-[9.5px] font-extrabold text-slate-400 tracking-wider uppercase mb-1">YOUR BORROWING RULE</h3>
               {/* Neutral pill - NO yellow background */}
@@ -1833,7 +1834,7 @@ export default function LibraryPortal() {
           <div className={`grid grid-cols-1 sm:grid-cols-2 ${isLibrarian ? 'lg:grid-cols-4' : 'lg:grid-cols-3'} gap-3.5`}>
             {loading ? (
               Array.from({ length: isLibrarian ? 4 : 3 }).map((_, i) => (
-                <div key={i} className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70 animate-pulse">
+                <div key={i} className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70 animate-pulse">
                   <div className="w-10 h-10 rounded-xl bg-slate-200 shrink-0"></div>
                   <div className="flex flex-col gap-1.5 w-full py-1">
                     <div className="h-2 bg-slate-200 rounded w-1/2"></div>
@@ -1844,7 +1845,7 @@ export default function LibraryPortal() {
             ) : (
               <>
                 {/* Total Titles */}
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
                   <div className="w-10 h-10 rounded-xl bg-slate-50 border border-slate-100 flex items-center justify-center text-slate-400 shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.75} stroke="currentColor" className="w-5 h-5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
@@ -1857,7 +1858,7 @@ export default function LibraryPortal() {
                 </div>
 
                 {/* Available */}
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
                   <div className="w-10 h-10 rounded-xl bg-emerald-50/80 border border-emerald-100 flex items-center justify-center text-emerald-500 shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1872,7 +1873,7 @@ export default function LibraryPortal() {
                 </div>
 
                 {/* Checked Out */}
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
                   <div className="w-10 h-10 rounded-xl bg-amber-50/80 border border-amber-100 flex items-center justify-center text-amber-500 shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -1889,7 +1890,7 @@ export default function LibraryPortal() {
 
                 {/* Overdue Copies (Only on SuperAdmin and Admin) */}
                 {isLibrarian && (
-                  <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                  <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
                     <div className="w-10 h-10 rounded-xl bg-rose-50/80 border border-rose-100 flex items-center justify-center text-rose-500 shrink-0">
                       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
@@ -1909,7 +1910,7 @@ export default function LibraryPortal() {
           {isLibrarian && (
             <div className="w-full sm:w-64">
               {loading ? (
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70 animate-pulse">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70 animate-pulse">
                   <div className="w-10 h-10 rounded-xl bg-slate-200 shrink-0"></div>
                   <div className="flex flex-col gap-1.5 w-full py-1">
                     <div className="h-2 bg-slate-200 rounded w-1/2"></div>
@@ -1917,7 +1918,7 @@ export default function LibraryPortal() {
                   </div>
                 </div>
               ) : (
-                <div className="bg-white rounded-[1.25rem] p-4 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
+                <div className="bg-white rounded-[1.25rem] p-6 flex items-center gap-3.5 shadow-xs border border-slate-200/70">
                   <div className="w-10 h-10 rounded-xl bg-rose-50/80 border border-rose-100 flex items-center justify-center text-rose-600 shrink-0 font-black text-base">
                     ₱
                   </div>
@@ -1932,9 +1933,9 @@ export default function LibraryPortal() {
         </div>
 
         {/* 3. Desktop Navigation Tabs Card */}
-        <div className="bg-white rounded-[1.25rem] p-3 shadow-xs border border-slate-200/70 flex flex-col gap-2.5">
+        <div className="bg-white rounded-[1.25rem] p-3 shadow-xs border border-slate-200/70 flex flex-col gap-4">
           {/* Row 1: 3 Main Tabs for Everyone */}
-          <div className={`grid grid-cols-1 gap-2.5 ${canBorrow ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
+          <div className={`grid grid-cols-1 gap-4 ${canBorrow ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
             {/* Catalog Search */}
             <button
               onClick={() => setActiveTab('catalog')}
@@ -1997,7 +1998,7 @@ export default function LibraryPortal() {
 
           {/* Row 2: Admin Tabs + Add Title Button (Only on SuperAdmin and Admin, NO yellow background) */}
           {isLibrarian && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               {/* Circulation Desk */}
               <button
                 onClick={() => setActiveTab('circulation')}
@@ -2045,7 +2046,7 @@ export default function LibraryPortal() {
         </div>
 
         {/* 4. Desktop Tab Content Area */}
-        <div className="flex flex-col gap-4 w-full">
+        <div className="flex flex-col gap-6 w-full">
           {activeTab === 'catalog' && (
             <>
               {/* Search & Filter Section (Desktop) */}
@@ -2105,9 +2106,9 @@ export default function LibraryPortal() {
 
               {/* Book Cards Grid - 3 Columns Exactly Matching User Mockup */}
               {loading ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {Array.from({ length: 6 }).map((_, i) => (
-                    <div key={i} className="bg-white rounded-[1.25rem] p-4 shadow-xs border border-slate-200/70 flex flex-col justify-between animate-pulse">
+                    <div key={i} className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70 flex flex-col justify-between animate-pulse">
                       <div className="flex gap-3.5">
                         <div className="w-[76px] h-[92px] shrink-0 rounded-lg bg-slate-200"></div>
                         <div className="flex flex-col flex-1 gap-1.5 py-1">
@@ -2136,9 +2137,9 @@ export default function LibraryPortal() {
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                   {filteredBooks.map((book) => (
-                    <div key={book.id} className="bg-white rounded-[1.25rem] p-4 shadow-xs border border-slate-200/70 flex flex-col justify-between hover:shadow-sm transition-all">
+                    <div key={book.id} className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70 flex flex-col justify-between hover:shadow-sm transition-all">
                       <div className="flex gap-3.5">
                         <div className="w-[72px] aspect-[3/4] shrink-0 rounded-lg overflow-hidden border border-slate-200 bg-slate-100 shadow-xs flex items-center justify-center relative">
                           <BookCover src={book.image} alt={book.title} />
@@ -2232,7 +2233,7 @@ export default function LibraryPortal() {
           )}
 
           {activeTab === 'borrowing' && canBorrow && (
-            <div className="flex flex-col gap-4.5 w-full">
+            <div className="flex flex-col gap-8 w-full">
               {/* Top Full-Width Card: Your Active Book Loans */}
               <div className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-1">
@@ -2268,11 +2269,11 @@ export default function LibraryPortal() {
                     </p>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
                     {myLoans.map(loan => (
                       <div
                         key={loan.transaction_id}
-                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-4 shadow-xs cursor-pointer hover:border-emerald-300 transition-colors"
+                        className="border border-emerald-200 bg-emerald-50/30 rounded-xl p-6 shadow-xs cursor-pointer hover:border-emerald-300 transition-colors"
                         onClick={() => setSelectedLoan(loan)}
                       >
                         <h4 className="font-extrabold text-[#0f172a] text-[13px] mb-1 truncate" title={loan.book_copy?.book?.book_title}>
@@ -2298,7 +2299,7 @@ export default function LibraryPortal() {
               </div>
 
               {/* Bottom 2-Column Grid: Fines Ledger & Book Hold Requests */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4.5">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                 {/* Left: Library Fines & Clearance Ledger */}
                 <div className="bg-white rounded-[1.25rem] p-6 shadow-xs border border-slate-200/70 flex flex-col justify-between">
                   <div>
@@ -2312,7 +2313,7 @@ export default function LibraryPortal() {
                       </span>
                     </div>
 
-                    <div className="border border-slate-100 rounded-xl p-4 bg-white shadow-2xs mb-3.5">
+                    <div className="border border-slate-100 rounded-xl p-6 bg-white shadow-2xs mb-3.5">
                       <div className="flex justify-between items-center mb-1.5">
                         <span className="text-[12px] font-extrabold text-slate-600">Unpaid Library Fines Balance:</span>
                         <span className="text-[17px] font-black text-[#8B1A24]">{peso(myBalance)}</span>
@@ -2323,7 +2324,7 @@ export default function LibraryPortal() {
                     </div>
                   </div>
 
-                  <div className="border border-sky-200 bg-sky-50/60 rounded-xl p-3.5 flex gap-2.5 items-start mt-auto">
+                  <div className="border border-sky-200 bg-sky-50/60 rounded-xl p-3.5 flex gap-4 items-start mt-auto">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 shrink-0 text-sky-600 mt-0.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                     </svg>
@@ -2356,7 +2357,7 @@ export default function LibraryPortal() {
                         </p>
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-2.5 mb-3.5">
+                      <div className="flex flex-col gap-4 mb-3.5">
                         {myHolds.map(hold => (
                           <div key={hold.id} className="border border-slate-200/80 rounded-xl p-3.5 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs">
                             <div>
@@ -2384,7 +2385,7 @@ export default function LibraryPortal() {
                     )}
                   </div>
 
-                  <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3.5 flex gap-2.5 items-start mt-auto">
+                  <div className="border border-amber-200 bg-amber-50/60 rounded-xl p-3.5 flex gap-4 items-start mt-auto">
                     <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-4 h-4 shrink-0 text-amber-600 mt-0.5">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
@@ -2466,7 +2467,7 @@ export default function LibraryPortal() {
           )}
 
           {activeTab === 'reserves' && (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-6">
               {isFaculty ? (
                 <TeacherReservesView books={books} onSectionsLoaded={handleFacultySections} />
               ) : (
@@ -2489,9 +2490,9 @@ export default function LibraryPortal() {
                   </div>
 
                   {loading ? (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {Array.from({ length: 2 }).map((_, i) => (
-                        <div key={i} className="border border-slate-200 rounded-[1.25rem] p-4 animate-pulse">
+                        <div key={i} className="border border-slate-200 rounded-[1.25rem] p-6 animate-pulse">
                           <div className="h-3 bg-slate-200 rounded w-1/3 mb-3"></div>
                           <div className="h-4 bg-slate-200 rounded w-2/3 mb-2"></div>
                           <div className="h-2.5 bg-slate-100 rounded w-1/2"></div>
@@ -2508,7 +2509,7 @@ export default function LibraryPortal() {
                       </p>
                     </div>
                   ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                       {reserves.map(reserve => (
                         isLibrarian ? (
                           <AdminReserveCard
@@ -2524,6 +2525,7 @@ export default function LibraryPortal() {
                             reserve={reserve}
                             onViewClassmates={handleViewClassmates}
                             onRequestBorrow={handleRequestReserveCopy}
+                              borrowingEnabled={summary?.borrowing_enabled !== false}
                           />
                         )
                       ))}
@@ -2550,10 +2552,10 @@ export default function LibraryPortal() {
               </div>
 
               {/* Manual check-out, matching the mobile circulation desk. */}
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 mb-4">
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-6 mb-4">
                 <h3 className="font-extrabold text-[13px] text-[#0f172a] mb-3">Check-Out Book Copy</h3>
                 <form
-                  className="flex flex-col sm:flex-row gap-2.5"
+                  className="flex flex-col sm:flex-row gap-4"
                   onSubmit={(e) => {
                     handleCheckout(e, checkoutData.userId, checkoutData.copyId);
                     setCheckoutData({ userId: '', copyId: '' });
@@ -2588,7 +2590,7 @@ export default function LibraryPortal() {
               </div>
 
               {/* Search + scope: active loans, or the full transaction history. */}
-              <div className="mb-4 flex flex-col sm:flex-row gap-2.5">
+              <div className="mb-4 flex flex-col sm:flex-row gap-4">
                 <input
                   type="text"
                   placeholder="Search by borrower ID, name, copy, or title…"
@@ -2695,7 +2697,7 @@ export default function LibraryPortal() {
 
           {/* Admin Fines & Queue (Desktop) - Only on SuperAdmin and Admin */}
           {activeTab === 'fines' && isLibrarian && (
-            <div className="flex flex-col gap-4 mt-2">
+            <div className="flex flex-col gap-6 mt-2">
               <RenewalRequestsPanel
                 requests={pendingRenewals}
                 onDecide={handleDecideRenewal}
@@ -2777,7 +2779,7 @@ export default function LibraryPortal() {
       {/* Modal: View Copies & Physical RFID Status */}
         
       {selectedBook && (
-        <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 flex items-center justify-center p-6 z-50">
           <div
             className="absolute inset-0 bg-black/50 backdrop-blur-xs anim-fade-in"
             onClick={() => setSelectedBook(null)}
@@ -2864,7 +2866,12 @@ export default function LibraryPortal() {
               )}
             </div>
 
-            <div className="flex justify-end gap-2.5 pt-2.5 border-t border-slate-100">
+            <div className="flex justify-end gap-4 pt-2.5 border-t border-slate-100 items-center">
+              {summary && summary.borrowing_enabled === false && (
+                <span className="text-red-500 text-xs font-semibold mr-auto">
+                  Student borrowing is currently disabled by the library.
+                </span>
+              )}
               <button
                 onClick={() => setSelectedBook(null)}
                 className="px-4 py-2 border border-slate-200 rounded-xl text-slate-700 text-[11px] font-extrabold hover:bg-slate-50 cursor-pointer"
@@ -2873,7 +2880,7 @@ export default function LibraryPortal() {
               </button>
               <button
                 onClick={() => handleHoldRequest(selectedBook.id)}
-                disabled={actionBusy === `hold-${selectedBook.id}`}
+                disabled={actionBusy === `hold-${selectedBook.id}` || (summary && summary.borrowing_enabled === false)}
                 className="px-4 py-2 bg-[#8B1A24] text-white rounded-xl text-[11px] font-extrabold hover:bg-[#6b141c] transition-colors shadow-xs cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {actionBusy === `hold-${selectedBook.id}`
@@ -2888,7 +2895,7 @@ export default function LibraryPortal() {
 
       {/* Modal: Active Loan Details */}
       {selectedLoan && (
-        <div className="fixed inset-0 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 flex items-center justify-center p-6 z-50">
           <div
             className="absolute inset-0 bg-black/60 backdrop-blur-xs anim-fade-in"
             onClick={() => setSelectedLoan(null)}
@@ -2968,7 +2975,7 @@ export default function LibraryPortal() {
               </div>
             )}
 
-            <div className="flex justify-end gap-2.5 mt-5">
+            <div className="flex justify-end gap-4 mt-5">
               <button
                 onClick={() => setSelectedLoan(null)}
                 className="px-4 py-2 border border-slate-200 rounded-xl text-xs font-extrabold hover:bg-slate-50 cursor-pointer"
