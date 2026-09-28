@@ -12,12 +12,18 @@ import useDialog from '../hooks/useDialog';
  */
 export default function AdminFinesPanel({ finesData, onSettled, loading = false }) {
   const [target, setTarget] = useState(null); // { user, type }
+  const [searchQuery, setSearchQuery] = useState('');
   const [amount, setAmount] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
 
   const debtors = finesData?.debtors || [];
+  const filteredDebtors = debtors.filter(d => 
+    d.username?.toLowerCase().includes(searchQuery.toLowerCase()) || 
+    String(d.user_id).includes(searchQuery)
+  );
+  
   const dailyRate = finesData?.daily_rate ?? 10;
   const totalOutstanding = finesData?.total_outstanding ?? 0;
 
@@ -86,8 +92,30 @@ export default function AdminFinesPanel({ finesData, onSettled, loading = false 
         </div>
       )}
 
+      <div className="relative mb-4">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5 absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z" />
+        </svg>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search by username or ID..."
+          className="w-full bg-[#f8fafc] border border-slate-200/80 rounded-xl py-2 pl-9 pr-4 text-[12px] text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-1 focus:ring-slate-300"
+        />
+        {searchQuery && (
+          <button
+            onClick={() => setSearchQuery('')}
+            className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+            aria-label="Clear search"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5"><path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        )}
+      </div>
+
       {loading ? (
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-4">
           {Array.from({ length: 2 }).map((_, i) => (
             <div key={i} className="border border-slate-200/80 rounded-xl p-3.5 bg-white animate-pulse">
               <div className="h-3 bg-slate-200 rounded w-1/3 mb-3"></div>
@@ -105,9 +133,14 @@ export default function AdminFinesPanel({ finesData, onSettled, loading = false 
             Fines appear here when an overdue book is checked in.
           </p>
         </div>
+      ) : filteredDebtors.length === 0 ? (
+        <div className="border border-slate-100 rounded-2xl py-10 px-6 flex flex-col items-center justify-center bg-slate-50/50 text-center">
+          <h3 className="font-extrabold text-[#0f172a] text-[13px] mb-1">No matching fines found.</h3>
+          <p className="text-slate-400 text-[11px] font-medium">Try adjusting your search.</p>
+        </div>
       ) : (
-        <div className="flex flex-col gap-2.5">
-          {debtors.map((d) => (
+        <div className="flex flex-col gap-4">
+          {filteredDebtors.map((d) => (
             <div
               key={d.user_id}
               className="border border-slate-200/80 rounded-xl p-3.5 bg-white flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-2xs"
@@ -193,7 +226,7 @@ export default function AdminFinesPanel({ finesData, onSettled, loading = false 
               </div>
             )}
 
-            <div className="flex justify-end gap-2.5 mt-5">
+            <div className="flex justify-end gap-4 mt-5">
               <button
                 onClick={closeSettle}
                 disabled={submitting}

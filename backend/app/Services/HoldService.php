@@ -11,6 +11,7 @@ use App\Models\Transaction;
 use App\Models\User;
 use Exception;
 use Illuminate\Support\Facades\DB;
+use App\Services\LibrarySettingsService;
 
 /**
  * Holds come in two pools that must never mix:
@@ -25,6 +26,13 @@ use Illuminate\Support\Facades\DB;
  */
 class HoldService
 {
+    protected LibrarySettingsService $settings;
+
+    public function __construct(LibrarySettingsService $settings)
+    {
+        $this->settings = $settings;
+    }
+
     /**
      * Place a general-circulation hold on a book.
      *
@@ -37,6 +45,10 @@ class HoldService
 
             if ($user && ! $user->canBorrow()) {
                 throw new Exception('Super Admin accounts cannot borrow library materials.');
+            }
+
+            if ($user && ! $this->settings->borrowingEnabledFor($user->role)) {
+                throw new Exception('Borrowing is currently disabled for this borrower category.');
             }
 
             $book = Book::find($bookId);
@@ -128,6 +140,10 @@ class HoldService
 
             if (! $user || ! $user->canBorrow()) {
                 throw new Exception('Super Admin accounts cannot borrow library materials.');
+            }
+
+            if (! $this->settings->borrowingEnabledFor($user->role)) {
+                throw new Exception('Borrowing is currently disabled for this borrower category.');
             }
 
             $enrolled = CourseSectionStudent::where('section_id', $reserve->section_id)

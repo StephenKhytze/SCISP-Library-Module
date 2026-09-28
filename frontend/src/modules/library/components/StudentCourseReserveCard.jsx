@@ -14,10 +14,10 @@ import { Loader2 } from 'lucide-react';
  * from the reserve's own active transactions) and the availability states are
  * reachable; the rest stay dormant rather than being simulated.
  */
-export default function StudentCourseReserveCard({ reserve, onViewClassmates, onRequestBorrow }) {
+export default function StudentCourseReserveCard({ reserve, onViewClassmates, onRequestBorrow, borrowingEnabled = true }) {
   const [isRequesting, setIsRequesting] = useState(false);
 
-  const canRequest = typeof onRequestBorrow === 'function';
+  const canRequest = typeof onRequestBorrow === 'function' && borrowingEnabled !== false;
 
   const handleRequest = async () => {
     if (!canRequest) return;
@@ -85,7 +85,11 @@ export default function StudentCourseReserveCard({ reserve, onViewClassmates, on
             'Request to Borrow'
           )}
         </button>
-        {!canRequest && (
+        {!borrowingEnabled ? (
+          <span className="text-[9px] font-bold text-red-500 text-center leading-tight">
+            Student borrowing is currently disabled by the library.
+          </span>
+        ) : !canRequest && (
           <span className="text-[9px] font-bold text-slate-400 text-center leading-tight">
             Ask the circulation desk — online requests are not live yet
           </span>

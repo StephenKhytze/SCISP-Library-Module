@@ -346,7 +346,7 @@ export default function AdminInventoryPanel({
       {visible.length === 0 ? (
         <p className="text-[12px] text-slate-500 italic py-6 text-center">No titles match that search.</p>
       ) : (
-        <div className="flex flex-col gap-2.5 max-h-[26rem] overflow-y-auto pr-1">
+        <div className="flex flex-col gap-4 max-h-[26rem] overflow-y-auto pr-1">
           {visible.map((book) => {
             const archivedCopyCount = (book.copies || []).filter(copy => copy.is_archived === true).length;
             
@@ -513,7 +513,7 @@ export default function AdminInventoryPanel({
               </div>
             )}
 
-            <div className="flex justify-end gap-2.5 mt-5">
+            <div className="flex justify-end gap-4 mt-5">
               <button
                 onClick={() => setEditing(null)}
                 className="px-4 py-2 border border-slate-200 rounded-xl text-[12px] font-extrabold hover:bg-slate-50 cursor-pointer"
@@ -591,7 +591,7 @@ export default function AdminInventoryPanel({
                   return (
                     <div key={copy.copy_id} className="border border-slate-200/80 rounded-xl p-3.5 bg-white flex flex-col gap-3 shadow-xs">
                       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 min-w-0">
-                        <div className="font-mono text-[11.5px] font-extrabold text-[#0f172a] shrink-0 flex items-center flex-wrap gap-2.5 min-w-0">
+                        <div className="font-mono text-[11.5px] font-extrabold text-[#0f172a] shrink-0 flex items-center flex-wrap gap-4 min-w-0">
                           <span className="truncate">{copy.accession_number || `CPY-${copy.copy_id}`}</span>
                           {copy.is_archived ? (
                             <StatusBadge status="archived" />
@@ -600,7 +600,7 @@ export default function AdminInventoryPanel({
                           )}
                         </div>
 
-                        <div className="flex items-center flex-wrap gap-2.5">
+                        <div className="flex items-center flex-wrap gap-4">
                           <div className="flex items-center gap-1.5">
                             <label className="text-[10px] font-extrabold text-slate-400 uppercase tracking-wider hidden sm:block">Cond</label>
                             <select
@@ -718,8 +718,7 @@ export default function AdminInventoryPanel({
         newBook={newBook}
         setNewBook={setNewBook}
         handleAddBook={async (e) => {
-          await handleAddBook(e);
-          setIsAddBookOpen(false);
+          await handleAddBook(e, () => setIsAddBookOpen(false));
         }}
         onCancel={() => setIsAddBookOpen(false)}
         actionBusy={actionBusy}
